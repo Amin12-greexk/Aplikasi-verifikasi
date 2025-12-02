@@ -97,7 +97,7 @@ flutter:
 
 flutter_launcher_icons:
   android: "ic_launcher"
-  ios: true
+  ios: false
   windows:
     generate: true
   image_path: "assets/logo.jpg"

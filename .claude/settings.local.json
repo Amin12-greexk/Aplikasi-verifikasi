@@ -7,7 +7,16 @@
       "Bash(/mnt/c/Flutter/flutter/bin/flutter pub:*)",
       "Bash(dos2unix:*)",
       "Bash(bash -c \"cd ''''/mnt/c/Users/USER/Desktop/Aplikasi verifikasi/verifikasi_mobile'''' && /mnt/c/Flutter/flutter/bin/flutter pub get\")",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(/mnt/c/Flutter/flutter/bin/flutter build:*)",
+      "Bash(xargs -I {} sh -c \"head -c 2 \"\"{}\"\" | od -An -tx1 | grep -q \"\"2320\"\" && echo \"\"{}\"\"\")",
+      "Bash(while IFS= read -r file)",
+      "Bash(do if file $file)",
+      "Bash(then sed -i s/r$// $file)",
+      "Bash(bash /mnt/c/Flutter/flutter/bin/flutter clean:*)",
+      "Bash(bash:*)",
+      "Bash(git config:*)",
+      "Bash(/mnt/c/Flutter/flutter/bin/flutter clean)"
     ],
     "deny": [],
     "ask": []

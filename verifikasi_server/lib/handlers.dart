@@ -4,6 +4,11 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:sqlite3/sqlite3.dart';
 
+String _generateToken(String username, String role) {
+  // Simple token generation - in production use JWT
+  return 'token_${username}_${role}_${DateTime.now().millisecondsSinceEpoch}';
+}
+
 Future<Router> buildRouter(Database db) async {
   final r = Router();
 
@@ -27,6 +32,53 @@ Future<Router> buildRouter(Database db) async {
       [idKaryawan, statusPengawas, statusSecurity, tanggal],
     );
   }
+
+  // Login endpoint
+  r.post('/auth/login', (Request req) async {
+    try {
+      final body = jsonDecode(await req.readAsString());
+      final username = body['username']?.toString().trim();
+      final password = body['password']?.toString().trim();
+      final role = body['role']?.toString().trim();
+
+      if (username == null || username.isEmpty) {
+        return bad('Username wajib diisi');
+      }
+      if (password == null || password.isEmpty) {
+        return bad('Password wajib diisi');
+      }
+      if (role == null || role.isEmpty) {
+        return bad('Role wajib diisi');
+      }
+
+      // Validate role
+      if (role != 'pengawas' && role != 'security') {
+        return bad('Role tidak valid', code: 400);
+      }
+
+      // Query user from database
+      final rows = db.select(
+        'SELECT * FROM users WHERE username = ? AND password = ? AND role = ?',
+        [username, password, role],
+      );
+
+      if (rows.isEmpty) {
+        return bad('Username atau password salah', code: 401);
+      }
+
+      final user = rows.first;
+      final token = _generateToken(username, role);
+
+      return ok({
+        'message': 'Login berhasil',
+        'token': token,
+        'username': user['username'],
+        'role': user['role'],
+      });
+    } catch (e) {
+      return bad('Error: ${e.toString()}', code: 500);
+    }
+  });
 
   r.post('/scan-pengawas', (Request req) async {
     final body = jsonDecode(await req.readAsString());

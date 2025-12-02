@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import 'auth_service.dart';
+import 'config.dart';
 import 'daily_refresh_manager.dart';
+import 'login_page.dart';
 import 'scanner_page.dart';
+import 'settings_page.dart';
 import 'status_page.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await ServerConfig.init();
+  await AuthService.init();
   runApp(const MyApp());
 }
 
@@ -52,7 +59,11 @@ class MyApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const HomeShell(),
+      home: AuthService.isLoggedIn ? const HomeShell() : const LoginPage(),
+      routes: {
+        '/home': (context) => const HomeShell(),
+        '/login': (context) => const LoginPage(),
+      },
     );
   }
 }
@@ -173,6 +184,17 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
                       ),
                     ],
                   ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.settings, color: Colors.white),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const SettingsPage(),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),

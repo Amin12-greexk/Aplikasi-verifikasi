@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import 'config.dart';
+import 'config.dart' as config_module;
 
 Map<String, dynamic> _tryJson(String body) {
   try {
@@ -16,7 +16,7 @@ Map<String, dynamic> _tryJson(String body) {
 
 Future<Map<String, dynamic>> accPengawas(String id) async {
   final res = await http.post(
-    Uri.parse('$baseUrl/scan-pengawas'),
+    Uri.parse('${config_module.ServerConfig.baseUrl}/scan-pengawas'),
     headers: {'Content-Type': 'application/json'},
     body: jsonEncode({'id_karyawan': id}),
   );
@@ -29,7 +29,7 @@ Future<Map<String, dynamic>> accPengawas(String id) async {
 
 Future<Map<String, dynamic>> accSecurity(String id) async {
   final res = await http.post(
-    Uri.parse('$baseUrl/scan-security'),
+    Uri.parse('${config_module.ServerConfig.baseUrl}/scan-security'),
     headers: {'Content-Type': 'application/json'},
     body: jsonEncode({'id_karyawan': id}),
   );
@@ -41,7 +41,7 @@ Future<Map<String, dynamic>> accSecurity(String id) async {
 }
 
 Future<List<Map<String, dynamic>>> fetchLogs() async {
-  final res = await http.get(Uri.parse('$baseUrl/logs'));
+  final res = await http.get(Uri.parse('${config_module.ServerConfig.baseUrl}/logs'));
   if (res.statusCode >= 400) {
     final body = _tryJson(res.body);
     throw Exception(body['error'] ?? 'Gagal mengambil data');
@@ -53,7 +53,7 @@ Future<List<Map<String, dynamic>>> fetchLogs() async {
 
 Future<Map<String, dynamic>> dailyReset() async {
   final res = await http.post(
-    Uri.parse('$baseUrl/daily-reset'),
+    Uri.parse('${config_module.ServerConfig.baseUrl}/daily-reset'),
     headers: {'Content-Type': 'application/json'},
   );
   final data = _tryJson(res.body);
