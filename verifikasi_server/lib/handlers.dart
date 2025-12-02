@@ -18,6 +18,16 @@ Future<Router> buildRouter(Database db) async {
         headers: {'Content-Type': 'application/json'},
       );
 
+  // Helper function to save to history
+  void _saveToHistory(String idKaryawan, String statusPengawas, String statusSecurity) {
+    final today = DateTime.now();
+    final tanggal = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    db.execute(
+      'INSERT INTO log_pulang_history(id_karyawan, status_pengawas, status_security, tanggal) VALUES(?, ?, ?, ?)',
+      [idKaryawan, statusPengawas, statusSecurity, tanggal],
+    );
+  }
+
   r.post('/scan-pengawas', (Request req) async {
     final body = jsonDecode(await req.readAsString());
     final id = body['id_karyawan']?.toString().trim();
@@ -27,6 +37,7 @@ Future<Router> buildRouter(Database db) async {
       'ON CONFLICT(id_karyawan) DO UPDATE SET status_pengawas="ACC";',
       [id],
     );
+    _saveToHistory(id, 'ACC', 'PENDING');
     final row = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [id]).first;
     return ok(row);
   });
@@ -40,6 +51,7 @@ Future<Router> buildRouter(Database db) async {
     final row = rows.first;
     if (row['status_pengawas'] != 'ACC') return bad('Pengawas belum ACC');
     db.execute('UPDATE log_pulang SET status_security="ACC" WHERE id_karyawan=?', [id]);
+    _saveToHistory(id, 'ACC', 'ACC');
     final updated = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [id]).first;
     return ok(updated);
   });
@@ -67,6 +79,64 @@ Future<Router> buildRouter(Database db) async {
 
   r.get('/logs', logsHandler);
   r.get('/logs/', logsHandler); // handle trailing slash
+
+  // Get logs by date
+  r.get('/logs-history/<tanggal>', (Request req, String tanggal) {
+    try {
+      final rows = db.select(
+        'SELECT * FROM log_pulang_history WHERE tanggal = ? ORDER BY id_karyawan ASC',
+        [tanggal],
+      );
+      final list = rows
+          .map((r) => {
+                'id_karyawan': r['id_karyawan'],
+                'status_pengawas': r['status_pengawas'],
+                'status_security': r['status_security'],
+                'tanggal': r['tanggal'],
+              })
+          .toList();
+      return ok({'logs': list, 'tanggal': tanggal, 'total': list.length});
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
+
+  // Get all unique dates in history
+  r.get('/dates-history', (Request req) {
+    try {
+      final rows = db.select(
+        'SELECT DISTINCT tanggal FROM log_pulang_history ORDER BY tanggal DESC',
+      );
+      final dates = rows.map((r) => r['tanggal']).toList();
+      return ok({'dates': dates});
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
+
+  // Daily reset endpoint - clears current day logs but keeps history
+  r.post('/daily-reset', (Request req) async {
+    try {
+      final today = DateTime.now();
+      final tanggal = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+
+      // First, move all current logs to history
+      final currentLogs = db.select('SELECT * FROM log_pulang');
+      for (final log in currentLogs) {
+        final id = log['id_karyawan'];
+        final pengawas = log['status_pengawas'];
+        final security = log['status_security'];
+        _saveToHistory(id, pengawas, security);
+      }
+
+      // Clear current logs table
+      db.execute('DELETE FROM log_pulang');
+
+      return ok({'message': 'Daily reset completed', 'tanggal': tanggal, 'cleared': currentLogs.length});
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
 
   return r;
 }

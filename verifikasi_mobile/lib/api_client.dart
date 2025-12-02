@@ -50,3 +50,15 @@ Future<List<Map<String, dynamic>>> fetchLogs() async {
   final List<dynamic> logs = body['logs'] ?? [];
   return logs.cast<Map<String, dynamic>>();
 }
+
+Future<Map<String, dynamic>> dailyReset() async {
+  final res = await http.post(
+    Uri.parse('$baseUrl/daily-reset'),
+    headers: {'Content-Type': 'application/json'},
+  );
+  final data = _tryJson(res.body);
+  if (res.statusCode >= 400) {
+    throw Exception(data['error'] ?? 'Gagal melakukan daily reset');
+  }
+  return data;
+}

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter clean:*)",
+      "Bash(flutter analyze:*)",
+      "Bash(flutter pub get:*)",
+      "Bash(/mnt/c/Flutter/flutter/bin/flutter pub:*)",
+      "Bash(dos2unix:*)",
+      "Bash(bash -c \"cd ''''/mnt/c/Users/USER/Desktop/Aplikasi verifikasi/verifikasi_mobile'''' && /mnt/c/Flutter/flutter/bin/flutter pub get\")",
+      "Bash(cat:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

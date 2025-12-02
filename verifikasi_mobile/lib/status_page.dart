@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'api_client.dart';
+import 'daily_refresh_manager.dart';
 
 class StatusTab extends StatefulWidget {
   const StatusTab({super.key});
@@ -15,7 +16,27 @@ class _StatusTabState extends State<StatusTab> {
   @override
   void initState() {
     super.initState();
-    _future = fetchLogs();
+    _future = _initializeData();
+  }
+
+  Future<List<Map<String, dynamic>>> _initializeData() async {
+    try {
+      // Check if should refresh and clear old data
+      final shouldRefresh = await DailyRefreshManager.shouldRefreshDaily();
+      if (shouldRefresh) {
+        // Call server to reset/clear logs from previous day
+        // This will move current logs to history and clear the table
+        try {
+          await dailyReset();
+        } catch (e) {
+          print('Daily reset error: $e');
+          // Continue anyway, just log the data
+        }
+      }
+    } catch (e) {
+      print('Error in _initializeData: $e');
+    }
+    return await fetchLogs();
   }
 
   Color _statusColor(String pengawas, String security) {
@@ -40,18 +61,34 @@ class _StatusTabState extends State<StatusTab> {
   Widget build(BuildContext context) {
     return RefreshIndicator(
       onRefresh: _refresh,
+      color: Colors.green.shade600,
       child: FutureBuilder<List<Map<String, dynamic>>>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+              ),
+            );
           }
           if (snapshot.hasError) {
             return ListView(
               children: [
                 Padding(
                   padding: const EdgeInsets.all(16),
-                  child: Text('Error: ${snapshot.error}'),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red.shade300),
+                    ),
+                    child: Text(
+                      'Error: ${snapshot.error}',
+                      style: TextStyle(color: Colors.red.shade700),
+                    ),
+                  ),
                 )
               ],
             );
@@ -62,47 +99,107 @@ class _StatusTabState extends State<StatusTab> {
               logs.where((e) => e['status_pengawas'] == 'ACC' && e['status_security'] != 'ACC').length;
           final pending = logs.length - accBoth - accPengawas;
           return ListView(
-            padding: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.only(bottom: 20),
             children: [
               const SizedBox(height: 8),
               _StatRow(total: logs.length, accBoth: accBoth, accPengawas: accPengawas, pending: pending),
-              const SizedBox(height: 12),
+              const SizedBox(height: 20),
               if (logs.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('Belum ada data'),
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(24),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.inbox_outlined,
+                          size: 48,
+                          color: Colors.grey.shade400,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Belum ada data',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Data verifikasi akan muncul di sini',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade500,
+                        ),
+                      ),
+                    ],
+                  ),
                 )
               else
                 ...logs.map((item) {
                   final id = item['id_karyawan']?.toString() ?? '-';
                   final statusPengawas = item['status_pengawas']?.toString() ?? 'PENDING';
                   final statusSecurity = item['status_security']?.toString() ?? 'PENDING';
-                  final color = _statusColor(statusPengawas, statusSecurity);
                   final label = _statusLabel(statusPengawas, statusSecurity);
                   final isDone = statusPengawas == 'ACC' && statusSecurity == 'ACC';
                   return Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                     decoration: BoxDecoration(
-                      color: color,
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))],
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: isDone ? Colors.green.shade200 : Colors.amber.shade200,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withAlpha(20),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
                     ),
                     child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: isDone ? Colors.green : Colors.orange,
-                        child: Icon(isDone ? Icons.verified : Icons.pending, color: Colors.white),
+                      contentPadding: const EdgeInsets.all(16),
+                      leading: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: isDone ? Colors.green.shade100 : Colors.amber.shade100,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(
+                          isDone ? Icons.verified_user : Icons.pending_actions,
+                          color: isDone ? Colors.green.shade600 : Colors.amber.shade600,
+                          size: 20,
+                        ),
                       ),
-                      title: Text(id, style: const TextStyle(fontWeight: FontWeight.bold)),
+                      title: Text(
+                        id,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                      ),
                       subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: -4,
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _chip('Pengawas: $statusPengawas', statusPengawas == 'ACC' ? Colors.green : Colors.amber),
-                            _chip('Security: $statusSecurity',
-                                statusSecurity == 'ACC' ? Colors.green : Colors.amber),
-                            Text(label, style: TextStyle(color: Colors.grey.shade800)),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 4,
+                              children: [
+                                _chip('Pengawas: $statusPengawas', statusPengawas == 'ACC' ? Colors.green : Colors.amber),
+                                _chip('Security: $statusSecurity', statusSecurity == 'ACC' ? Colors.green : Colors.amber),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              label,
+                              style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                            ),
                           ],
                         ),
                       ),
@@ -149,17 +246,39 @@ class _StatRow extends StatelessWidget {
 
   Widget _statCard(String title, String value, Color bg) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: bg, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(15),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: const TextStyle(fontSize: 12, color: Colors.black54)),
-          const SizedBox(height: 6),
-          Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey.shade600,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: bg.withAlpha(255),
+            ),
+          ),
         ],
       ),
     );

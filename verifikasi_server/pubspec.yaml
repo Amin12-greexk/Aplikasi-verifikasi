@@ -34,14 +34,20 @@ dependencies:
   shelf_router: ^1.1.4
   sqlite3: ^2.4.5
   path: ^1.8.3
+  pdf: ^3.10.8
+  excel: ^4.0.6
+  intl: ^0.19.0
+  flutter_svg: ^2.0.10
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  file_picker: ^10.3.7
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.13.1
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -62,9 +68,11 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  assets:
+    - assets/logo.svg
+    - assets/logo.jpg
+    - assets/2.0x/logo.jpg
+    - assets/3.0x/logo.jpg
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
@@ -91,3 +99,10 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  windows:
+    generate: true
+  image_path: "assets/logo.jpg"
