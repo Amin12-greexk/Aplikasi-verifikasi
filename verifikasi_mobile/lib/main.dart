@@ -3,6 +3,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'auth_service.dart';
 import 'config.dart';
+import 'crud_log_page.dart';
 import 'daily_refresh_manager.dart';
 import 'login_page.dart';
 import 'scanner_page.dart';
@@ -122,23 +123,26 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
   }
 
   Widget _buildHeader() {
+    final isPengawas = AuthService.isPengawas();
+    final userName = AuthService.username ?? 'User';
+
     return FadeTransition(
       opacity: _headerAnimationController,
       child: Container(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              Colors.green.shade600,
-              Colors.green.shade500,
-            ],
+            colors: isPengawas
+                ? [Colors.blue.shade600, Colors.blue.shade500]
+                : [Colors.green.shade600, Colors.green.shade500],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
           borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
           boxShadow: [
             BoxShadow(
-              color: Colors.green.shade900.withAlpha(40),
+              color: (isPengawas ? Colors.blue.shade900 : Colors.green.shade900)
+                  .withAlpha(40),
               blurRadius: 16,
               offset: const Offset(0, 8),
             ),
@@ -155,10 +159,10 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
                     color: Colors.white.withAlpha(200),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: SizedBox(
-                    width: 40,
-                    height: 40,
-                    child: SvgPicture.asset('assets/logo.svg'),
+                  child: Icon(
+                    isPengawas ? Icons.badge : Icons.security,
+                    color: isPengawas ? Colors.blue.shade600 : Colors.green.shade600,
+                    size: 32,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -175,7 +179,7 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
                         ),
                       ),
                       Text(
-                        'Management System',
+                        isPengawas ? 'Pengawas' : 'Security',
                         style: TextStyle(
                           color: Colors.white.withAlpha(200),
                           fontSize: 12,
@@ -208,12 +212,18 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.info_outline, size: 16, color: Colors.green.shade600),
+                  Icon(
+                    isPengawas ? Icons.verified_user : Icons.security,
+                    size: 16,
+                    color: isPengawas ? Colors.blue.shade600 : Colors.green.shade600,
+                  ),
                   const SizedBox(width: 8),
                   Text(
-                    'Monitor ACC Pengawas & Security',
+                    isPengawas
+                        ? 'Login sebagai: $userName (Pengawas)'
+                        : 'Login sebagai: $userName (Security)',
                     style: TextStyle(
-                      color: Colors.green.shade700,
+                      color: isPengawas ? Colors.blue.shade700 : Colors.green.shade700,
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
                     ),
@@ -228,15 +238,77 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
   }
 
   Widget _body() {
-    switch (_index) {
-      case 0:
-        return const StatusTab();
-      case 1:
-        return const ScannerTab(isPengawas: true);
-      case 2:
-        return const ScannerTab(isPengawas: false);
-      default:
-        return const StatusTab();
+    if (AuthService.isPengawas()) {
+      // Menu untuk Pengawas
+      switch (_index) {
+        case 0:
+          return const StatusTab();
+        case 1:
+          return const ScannerTab(isPengawas: true);
+        case 2:
+          return const CRUDLogPage();
+        default:
+          return const StatusTab();
+      }
+    } else {
+      // Menu untuk Security (hanya Status & Scan)
+      switch (_index) {
+        case 0:
+          return const StatusTab();
+        case 1:
+          return const ScannerTab(isPengawas: false);
+        default:
+          return const StatusTab();
+      }
+    }
+  }
+
+  List<NavigationDestination> _buildNavigationDestinations() {
+    final isPengawas = AuthService.isPengawas();
+
+    if (isPengawas) {
+      // Navigation untuk Pengawas (3 menu: Status, Scan, Data)
+      return [
+        NavigationDestination(
+          icon: Icon(
+            Icons.list_alt,
+            color: _index == 0 ? Colors.green.shade600 : Colors.grey.shade500,
+          ),
+          label: 'Status',
+        ),
+        NavigationDestination(
+          icon: Icon(
+            Icons.badge,
+            color: _index == 1 ? Colors.green.shade600 : Colors.grey.shade500,
+          ),
+          label: 'Scan',
+        ),
+        NavigationDestination(
+          icon: Icon(
+            Icons.edit_note,
+            color: _index == 2 ? Colors.green.shade600 : Colors.grey.shade500,
+          ),
+          label: 'Data',
+        ),
+      ];
+    } else {
+      // Navigation untuk Security (2 menu: Status, Scan)
+      return [
+        NavigationDestination(
+          icon: Icon(
+            Icons.list_alt,
+            color: _index == 0 ? Colors.green.shade600 : Colors.grey.shade500,
+          ),
+          label: 'Status',
+        ),
+        NavigationDestination(
+          icon: Icon(
+            Icons.security,
+            color: _index == 1 ? Colors.green.shade600 : Colors.grey.shade500,
+          ),
+          label: 'Scan',
+        ),
+      ];
     }
   }
 
@@ -273,29 +345,7 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
           onDestinationSelected: (i) => setState(() => _index = i),
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.transparent,
-          destinations: [
-            NavigationDestination(
-              icon: Icon(
-                Icons.list_alt,
-                color: _index == 0 ? Colors.green.shade600 : Colors.grey.shade500,
-              ),
-              label: 'Status',
-            ),
-            NavigationDestination(
-              icon: Icon(
-                Icons.badge,
-                color: _index == 1 ? Colors.green.shade600 : Colors.grey.shade500,
-              ),
-              label: 'Scan Pengawas',
-            ),
-            NavigationDestination(
-              icon: Icon(
-                Icons.security,
-                color: _index == 2 ? Colors.green.shade600 : Colors.grey.shade500,
-              ),
-              label: 'Scan Security',
-            ),
-          ],
+          destinations: _buildNavigationDestinations(),
         ),
       ),
     );

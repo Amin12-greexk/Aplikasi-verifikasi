@@ -16,7 +16,21 @@
       "Bash(bash /mnt/c/Flutter/flutter/bin/flutter clean:*)",
       "Bash(bash:*)",
       "Bash(git config:*)",
-      "Bash(/mnt/c/Flutter/flutter/bin/flutter clean)"
+      "Bash(/mnt/c/Flutter/flutter/bin/flutter clean)",
+      "Bash(dart analyze:*)",
+      "Bash(find lib -name \"*.dart\" -type f -exec sh -c 'sed -i \"\"s/\\r$//\"\" \"\"$1\"\"' _ {} ;)",
+      "Bash(/usr/bin/dart analyze:*)",
+      "Bash(/mnt/c/Flutter/flutter/bin/dart analyze:*)",
+      "WebSearch",
+      "Bash(/mnt/c/Flutter/flutter/bin/flutter --version:*)",
+      "Bash(cd:*)",
+      "Bash(/mnt/c/Flutter/flutter/bin/flutter.bat pub get:*)",
+      "Bash(/mnt/c/Flutter/flutter/bin/cache/dart-sdk/bin/dart.exe pub get)",
+      "Bash(powershell.exe -Command \"cd ''''C:\\Users\\USER\\Desktop\\Aplikasi verifikasi\\verifikasi_mobile''''; & ''''C:\\Flutter\\flutter\\bin\\flutter.bat'''' pub get\")",
+      "Bash(powershell.exe -Command \"cd ''''C:\\Users\\USER\\Desktop\\Aplikasi verifikasi\\verifikasi_mobile''''; & ''''C:\\Flutter\\flutter\\bin\\flutter.bat'''' build apk --debug 2>&1\")",
+      "Bash(powershell.exe -Command \"cd ''''C:\\Users\\USER\\Desktop\\Aplikasi verifikasi\\verifikasi_server''''; & ''''C:\\Flutter\\flutter\\bin\\flutter.bat'''' pub get 2>&1\")",
+      "Bash(powershell.exe -Command \"cd ''''C:\\Users\\USER\\Desktop\\Aplikasi verifikasi\\verifikasi_server''''; & ''''C:\\Flutter\\flutter\\bin\\flutter.bat'''' build windows 2>&1\")",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []

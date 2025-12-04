@@ -1,42 +1,220 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:shelf/shelf.dart';
-import 'package:shelf/shelf_io.dart' as io;
 import 'package:sqlite3/sqlite3.dart' hide Row;
+import 'package:window_manager/window_manager.dart';
 
+import 'admin_login.dart';
 import 'db.dart';
-import 'handlers.dart';
+import 'headless_server.dart';
 import 'modern_dashboard.dart';
+import 'modern_server_home.dart';
+import 'system_tray_manager.dart';
 import 'ui.dart';
+import 'user_management.dart';
 
-void main() async {
+void main(List<String> args) async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Detect if running in service mode
+  final isServiceMode = args.contains('--service-mode');
+  final minimizeToTray = args.contains('--minimize-to-tray');
+
+  // Initialize database
   final db = await initDb('log.db');
-  runApp(ServerApp(db: db));
 
-  // Start the HTTP server in the background
-  final router = await buildRouter(db);
-  final handler = Pipeline()
-      .addMiddleware(logRequests())
-      .addHandler(router.call);
+  if (isServiceMode) {
+    // Headless mode: Run HTTP server only, no UI
+    stdout.writeln('[SERVICE MODE] Starting verifikasi_server as Windows Service...');
+    await startServerHeadless(db);
+    // Keep the application alive by preventing early exit
+    // The service wrapper will manage the process lifecycle
+    await Future.delayed(const Duration(days: 365));
+  } else {
+    // Desktop mode: Run both UI and HTTP server
+    stdout.writeln('[DESKTOP MODE] Starting verifikasi_server with UI...');
 
-  final server = await io.serve(handler, InternetAddress.anyIPv4, 8080);
-  stdout.writeln('Server jalan di http://${server.address.address}:${server.port}');
+    // Start the HTTP server in the background immediately
+    unawaited(startServerBackground(db));
+
+    runApp(ServerApp(
+      db: db,
+      minimizeToTray: minimizeToTray,
+    ));
+  }
 }
 
-class ServerApp extends StatelessWidget {
-  final Database db;
+// Helper to run future without awaiting
+void unawaited(Future<void> future) {
+  // Fire and forget
+}
 
-  const ServerApp({required this.db, super.key});
+class ServerApp extends StatefulWidget {
+  final Database db;
+  final bool minimizeToTray;
+
+  const ServerApp({
+    required this.db,
+    this.minimizeToTray = false,
+    super.key,
+  });
+
+  @override
+  State<ServerApp> createState() => _ServerAppState();
+}
+
+class _ServerAppState extends State<ServerApp> with WindowListener {
+  bool _isLoggedIn = false;
+  late SystemTrayManager _trayManager;
+
+  @override
+  void initState() {
+    super.initState();
+    _initWindowManager();
+    _initSystemTray();
+  }
+
+  Future<void> _initWindowManager() async {
+    try {
+      // Ensure window manager is initialized
+      await windowManager.ensureInitialized();
+      windowManager.addListener(this);
+
+      // Configure window
+      const windowOptions = WindowOptions(
+        size: Size(1280, 720),
+        center: true,
+        backgroundColor: Colors.white,
+        skipTaskbar: false,
+        alwaysOnTop: false,
+      );
+
+      await windowManager.waitUntilReadyToShow(windowOptions, () async {
+        await windowManager.show();
+        await windowManager.focus();
+      });
+
+      print('[Window] Window manager initialized');
+    } catch (e) {
+      print('[Window] Error initializing window manager: $e');
+    }
+  }
+
+  void _initSystemTray() {
+    _trayManager = SystemTrayManager();
+    _trayManager.initialize(
+      onShow: () {
+        if (kDebugMode) {
+          print('Show dashboard from tray');
+        }
+        _trayManager.showWindow();
+      },
+      onExit: () {
+        if (kDebugMode) {
+          print('Exit from tray');
+        }
+        windowManager.destroy();
+        exit(0);
+      },
+    );
+
+    // Minimize to tray on startup if flag is set
+    if (widget.minimizeToTray) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _trayManager.hideWindow();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _trayManager.dispose();
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  // WindowListener implementation
+  @override
+  void onWindowEvent(String eventName) {
+    print('[Window] Event: $eventName');
+  }
+
+  @override
+  void onWindowClose() async {
+    print('[Window] Window closing');
+    // Instead of closing immediately, minimize to tray
+    if (!_isLoggedIn) {
+      await windowManager.destroy();
+    } else {
+      await _trayManager.hideWindow();
+    }
+  }
+
+  @override
+  void onWindowMinimize() {
+    print('[Window] Minimized - hiding to tray');
+    _trayManager.hideWindow();
+  }
+
+  @override
+  void onWindowMaximize() {
+    print('[Window] Maximized');
+  }
+
+  @override
+  void onWindowRestore() {
+    print('[Window] Restored');
+  }
+
+  @override
+  void onWindowResized() {
+    print('[Window] Resized');
+  }
+
+  @override
+  void onWindowMoved() {
+    print('[Window] Moved');
+  }
+
+  @override
+  void onWindowFocusChanged(bool focused) {
+    if (kDebugMode) {
+      print('[Window] Focus changed: $focused');
+    }
+  }
+
+  @override
+  void onWindowEnterFullScreen() {
+    print('[Window] Entered fullscreen');
+  }
+
+  @override
+  void onWindowLeaveFullScreen() {
+    print('[Window] Left fullscreen');
+  }
+
+  @override
+  void onWindowBeforeClose() {
+    print('[Window] Before close');
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Verifikasi Pulang - Server',
       theme: GreenTheme.getTheme(),
-      home: ServerHome(db: db),
+      home: _isLoggedIn
+          ? ModernServerHome(db: widget.db)
+          : AdminLoginPage(
+              onLoginSuccess: (success) {
+                if (success) {
+                  setState(() => _isLoggedIn = true);
+                }
+              },
+            ),
       debugShowCheckedModeBanner: false,
     );
   }
@@ -171,6 +349,22 @@ class _ServerHomeState extends State<ServerHome> {
                 onPressed: _showHistoryPicker,
                 icon: const Icon(Icons.calendar_month, size: 18),
                 label: const Text('History'),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => UserManagementPage(db: widget.db),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.people, size: 18),
+                label: const Text('Users'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue.shade600,
+                ),
               ),
             ],
           ),

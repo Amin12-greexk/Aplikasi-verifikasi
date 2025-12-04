@@ -5,7 +5,9 @@ import 'auth_service.dart';
 import 'config.dart';
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key});
+  final bool isFromLogin;
+
+  const SettingsPage({super.key, this.isFromLogin = false});
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -120,66 +122,74 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Pengaturan'),
+        title: Text(widget.isFromLogin ? 'Server Settings' : 'Pengaturan'),
         elevation: 0,
+        leading: widget.isFromLogin
+            ? IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.pop(context),
+              )
+            : null,
       ),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          // User Info Section
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.blue.shade50,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.blue.shade200),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      AuthService.isPengawas() ? Icons.badge : Icons.security,
-                      color: Colors.blue.shade700,
-                      size: 28,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'User Login',
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            AuthService.username ?? 'Unknown',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue.shade700,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            AuthService.isPengawas() ? 'Pengawas' : 'Security',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.blue.shade600,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
+          // User Info Section - Only show if logged in
+          if (!widget.isFromLogin) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.blue.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        AuthService.isPengawas() ? Icons.badge : Icons.security,
+                        color: Colors.blue.shade700,
+                        size: 28,
                       ),
-                    ),
-                  ],
-                ),
-              ],
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'User Login',
+                              style: TextStyle(fontSize: 12, color: Colors.grey),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              AuthService.username ?? 'Unknown',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue.shade700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              AuthService.isPengawas() ? 'Pengawas' : 'Security',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.blue.shade600,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 32),
+            const SizedBox(height: 32),
+          ],
           Text(
             'Server Configuration',
             style: TextStyle(
@@ -317,17 +327,19 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           const SizedBox(height: 48),
-          const Divider(),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: _handleLogout,
-            icon: const Icon(Icons.logout),
-            label: const Text('Logout'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red.shade600,
-              padding: const EdgeInsets.symmetric(vertical: 16),
+          if (!widget.isFromLogin) ...[
+            const Divider(),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _handleLogout,
+              icon: const Icon(Icons.logout),
+              label: const Text('Logout'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red.shade600,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );

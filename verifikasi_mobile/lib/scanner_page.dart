@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'api_client.dart';
+import 'api_client_retry.dart'; // Use retry version
 import 'auth_service.dart';
 
 class ScannerTab extends StatefulWidget {
@@ -23,9 +23,37 @@ class _ScannerTabState extends State<ScannerTab> {
     super.initState();
   }
 
+  /// Extract PIN, Nama, and Bagian from barcode string to match server format
+  String _extractBarcodeInfo(String fullBarcode) {
+    try {
+      final namaMatch = RegExp(r'Nama:\s*([^|]+)').firstMatch(fullBarcode);
+      final pinMatch = RegExp(r'PIN:\s*([^|]+)').firstMatch(fullBarcode);
+      final bagianMatch = RegExp(r'Bagian:\s*([^|]+)').firstMatch(fullBarcode);
+
+      final nama = namaMatch?.group(1)?.trim() ?? '';
+      final pin = pinMatch?.group(1)?.trim() ?? '';
+      final bagian = bagianMatch?.group(1)?.trim() ?? '';
+
+      if (nama.isEmpty && pin.isEmpty && bagian.isEmpty) {
+        // If parsing fails, return original string
+        return fullBarcode;
+      }
+
+      // Format: "PIN: 12053 | Nama: SURATI | Bagian: Cuci Hancuran"
+      final List<String> parts = [];
+      if (pin.isNotEmpty) parts.add('PIN: $pin');
+      if (nama.isNotEmpty) parts.add('Nama: $nama');
+      if (bagian.isNotEmpty) parts.add('Bagian: $bagian');
+
+      return parts.join(' | ');
+    } catch (e) {
+      return fullBarcode;
+    }
+  }
+
   Future<bool> _checkPengawasApproval(String idKaryawan) async {
     try {
-      final logs = await fetchLogs();
+      final logs = await ApiClientRetry.fetchLogs();
       // Cek apakah ID ini sudah ACC pengawas
       final hasPengawasApproval = logs.any(
         (log) => log['id_karyawan'].toString() == idKaryawan &&
@@ -42,21 +70,32 @@ class _ScannerTabState extends State<ScannerTab> {
     final code = capture.barcodes.first.rawValue;
     if (code == null || code.isEmpty) return;
 
+    // Extract barcode to match server format: "PIN: XXX | Nama: XXX | Bagian: XXX"
+    final extractedCode = _extractBarcodeInfo(code);
+
+    // Prevent duplicate scans - jangan process ID yang sama 2x berturut-turut
+    if (_lastScannedId == extractedCode) {
+      return;
+    }
+
     // Validasi untuk scan security - check per ID
     if (!widget.isPengawas) {
-      final hasPengawasApproval = await _checkPengawasApproval(code);
+      final hasPengawasApproval = await _checkPengawasApproval(extractedCode);
       if (!hasPengawasApproval) {
-        setState(() => _info = '⚠️ ID $code belum scan pengawas');
+        // Show alert without the employee name for security
+        setState(() => _info = '⚠️ Belum scan pengawas');
+        _lastScannedId = extractedCode; // Set last scanned to prevent re-trigger
         return;
       }
     }
 
     setState(() {
       _processing = true;
-      _info = 'Mengirim $code...';
+      _info = 'Mengirim...';
+      _lastScannedId = extractedCode; // Track this scan
     });
     try {
-      final data = widget.isPengawas ? await accPengawas(code) : await accSecurity(code);
+      final data = widget.isPengawas ? await ApiClientRetry.accPengawas(extractedCode) : await ApiClientRetry.accSecurity(extractedCode);
       final pengawas = data['status_pengawas'] ?? 'UNKNOWN';
       final security = data['status_security'] ?? 'UNKNOWN';
 
@@ -142,34 +181,47 @@ class _ScannerTabState extends State<ScannerTab> {
       );
     }
 
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Header dengan status
-          _buildHeader(isPengawas, false),
-          const SizedBox(height: 16),
+    return Stack(
+      children: [
+        SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Header dengan status
+              _buildHeader(isPengawas, false),
+              const SizedBox(height: 16),
 
-          // Alert/Info Box
-          _buildAlertBox(isPengawas, false),
-          const SizedBox(height: 16),
+              // Alert/Info Box
+              _buildAlertBox(isPengawas, false),
+              const SizedBox(height: 16),
 
-          // Camera Scanner
-          _buildScannerBox(false),
-          const SizedBox(height: 16),
+              // Camera Scanner
+              _buildScannerBox(false),
+              const SizedBox(height: 16),
 
-          // Mode Description
-          _buildModeDescription(isPengawas),
-          const SizedBox(height: 12),
+              // Mode Description
+              _buildModeDescription(isPengawas),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+        // Floating Alert/Status Result - displayed on top of camera
+        Positioned(
+          top: 190,
+          left: 16,
+          right: 16,
+          child: Column(
+            children: [
+              // Status Result Box
+              if (_info != null) _buildResultBox(),
+              const SizedBox(height: 12),
 
-          // Status Result
-          if (_info != null) _buildResultBox(),
-          const SizedBox(height: 12),
-
-          // Processing Indicator
-          if (_processing) _buildProcessing(),
-        ],
-      ),
+              // Processing Indicator
+              if (_processing) _buildProcessing(),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -377,21 +429,22 @@ class _ScannerTabState extends State<ScannerTab> {
     final isWarning = _info!.contains('⚠️');
 
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isError
-            ? Colors.red.shade50
+            ? Colors.red.shade600
             : isSuccess
-                ? Colors.green.shade50
-                : Colors.yellow.shade50,
-        border: Border.all(
-          color: isError
-              ? Colors.red.shade300
-              : isSuccess
-                  ? Colors.green.shade300
-                  : Colors.yellow.shade300,
-        ),
+                ? Colors.green.shade600
+                : Colors.orange.shade600,
         borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: (isError ? Colors.red : isSuccess ? Colors.green : Colors.orange)
+                .withAlpha(100),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Row(
         children: [
@@ -401,26 +454,19 @@ class _ScannerTabState extends State<ScannerTab> {
                 : isSuccess
                     ? Icons.check_circle_outline
                     : Icons.warning_amber_outlined,
-            color: isError
-                ? Colors.red.shade700
-                : isSuccess
-                    ? Colors.green.shade700
-                    : Colors.yellow.shade700,
-            size: 24,
+            color: Colors.white,
+            size: 28,
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               _info!,
-              style: TextStyle(
-                color: isError
-                    ? Colors.red.shade700
-                    : isSuccess
-                        ? Colors.green.shade700
-                        : Colors.yellow.shade700,
-                fontWeight: FontWeight.w500,
-                fontSize: 13,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
               ),
+              maxLines: 2,
             ),
           ),
         ],
@@ -429,21 +475,32 @@ class _ScannerTabState extends State<ScannerTab> {
   }
 
   Widget _buildProcessing() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade600,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.blue.shade400.withAlpha(100),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
       child: Column(
         children: [
           CircularProgressIndicator(
             strokeWidth: 3,
-            valueColor: AlwaysStoppedAnimation<Color>(Colors.blue.shade600),
+            valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
           ),
           const SizedBox(height: 12),
-          Text(
+          const Text(
             'Sedang memproses...',
             style: TextStyle(
-              color: Colors.grey.shade700,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ],

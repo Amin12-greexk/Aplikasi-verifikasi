@@ -3,6 +3,12 @@ import 'package:sqlite3/sqlite3.dart';
 Future<Database> initDb(String path) async {
   final db = sqlite3.open(path);
 
+  // Set busy timeout - wait up to 5 seconds if database is locked
+  db.execute('PRAGMA busy_timeout = 5000;');
+
+  // Enable WAL mode for better concurrency
+  db.execute('PRAGMA journal_mode = WAL;');
+
   // Create users table for authentication
   db.execute('''
     CREATE TABLE IF NOT EXISTS users (
@@ -20,6 +26,8 @@ Future<Database> initDb(String path) async {
       id_karyawan TEXT PRIMARY KEY,
       status_pengawas TEXT NOT NULL DEFAULT 'PENDING',
       status_security TEXT NOT NULL DEFAULT 'PENDING',
+      pengawas_scanned_by TEXT,
+      security_scanned_by TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   ''');
@@ -31,6 +39,8 @@ Future<Database> initDb(String path) async {
       id_karyawan TEXT NOT NULL,
       status_pengawas TEXT NOT NULL,
       status_security TEXT NOT NULL,
+      pengawas_scanned_by TEXT,
+      security_scanned_by TEXT,
       tanggal DATE NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -40,6 +50,31 @@ Future<Database> initDb(String path) async {
   db.execute('''
     CREATE INDEX IF NOT EXISTS idx_tanggal ON log_pulang_history(tanggal);
   ''');
+
+  // Migration: Add pengawas_scanned_by and security_scanned_by columns if they don't exist
+  try {
+    db.execute('ALTER TABLE log_pulang ADD COLUMN pengawas_scanned_by TEXT;');
+  } catch (_) {
+    // Column already exists
+  }
+
+  try {
+    db.execute('ALTER TABLE log_pulang ADD COLUMN security_scanned_by TEXT;');
+  } catch (_) {
+    // Column already exists
+  }
+
+  try {
+    db.execute('ALTER TABLE log_pulang_history ADD COLUMN pengawas_scanned_by TEXT;');
+  } catch (_) {
+    // Column already exists
+  }
+
+  try {
+    db.execute('ALTER TABLE log_pulang_history ADD COLUMN security_scanned_by TEXT;');
+  } catch (_) {
+    // Column already exists
+  }
 
   // Create default users if they don't exist
   try {

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'api_client.dart';
+import 'api_client_retry.dart'; // Use retry version
 import 'daily_refresh_manager.dart';
 
 class StatusTab extends StatefulWidget {
@@ -19,6 +19,47 @@ class _StatusTabState extends State<StatusTab> {
     _future = _initializeData();
   }
 
+  /// Parse barcode string to extract Nama, PIN, and Bagian
+  /// Example input: "Nama: SURATI | PIN: 12053 | NIK: 3321125211850005 | Bagian: Cuci Hancuran | Alamat: ..."
+  /// Returns: "SURATI (PIN: 12053) - Cuci Hancuran"
+  String _extractEmployeeInfo(String fullBarcode) {
+    try {
+      final nama = _extractValue(fullBarcode, 'Nama');
+      final pin = _extractValue(fullBarcode, 'PIN');
+      final bagian = _extractValue(fullBarcode, 'Bagian');
+
+      if (nama.isEmpty && pin.isEmpty && bagian.isEmpty) {
+        // If parsing fails, return original string truncated
+        return fullBarcode.length > 30 ? '${fullBarcode.substring(0, 30)}...' : fullBarcode;
+      }
+
+      // Format: "NAMA (PIN: 12053) - Bagian"
+      final List<String> parts = [];
+      if (nama.isNotEmpty) parts.add(nama);
+      if (pin.isNotEmpty) parts.add('PIN: $pin');
+      if (bagian.isNotEmpty) parts.add(bagian);
+
+      return parts.join(' | ');
+    } catch (e) {
+      return fullBarcode.length > 30 ? '${fullBarcode.substring(0, 30)}...' : fullBarcode;
+    }
+  }
+
+  /// Extract value from barcode string by key
+  /// Example: extractValue("Nama: SURATI | PIN: 12053", "Nama") returns "SURATI"
+  String _extractValue(String barcode, String key) {
+    try {
+      final regex = RegExp('$key:\\s*([^|]+)');
+      final match = regex.firstMatch(barcode);
+      if (match != null) {
+        return match.group(1)?.trim() ?? '';
+      }
+    } catch (e) {
+      // Silent fail, return empty string
+    }
+    return '';
+  }
+
   Future<List<Map<String, dynamic>>> _initializeData() async {
     try {
       // Check if should refresh and clear old data
@@ -27,7 +68,7 @@ class _StatusTabState extends State<StatusTab> {
         // Call server to reset/clear logs from previous day
         // This will move current logs to history and clear the table
         try {
-          await dailyReset();
+          await ApiClientRetry.dailyReset();
         } catch (e) {
           print('Daily reset error: $e');
           // Continue anyway, just log the data
@@ -36,7 +77,7 @@ class _StatusTabState extends State<StatusTab> {
     } catch (e) {
       print('Error in _initializeData: $e');
     }
-    return await fetchLogs();
+    return await ApiClientRetry.fetchLogs();
   }
 
   Color _statusColor(String pengawas, String security) {
@@ -52,7 +93,7 @@ class _StatusTabState extends State<StatusTab> {
   }
 
   Future<void> _refresh() async {
-    final data = fetchLogs();
+    final data = ApiClientRetry.fetchLogs();
     setState(() => _future = data);
     await data;
   }
@@ -94,6 +135,7 @@ class _StatusTabState extends State<StatusTab> {
             );
           }
           final logs = snapshot.data ?? [];
+          // Logs are already sorted newest first from server
           final accBoth = logs.where((e) => e['status_pengawas'] == 'ACC' && e['status_security'] == 'ACC').length;
           final accPengawas =
               logs.where((e) => e['status_pengawas'] == 'ACC' && e['status_security'] != 'ACC').length;
@@ -143,9 +185,12 @@ class _StatusTabState extends State<StatusTab> {
                 )
               else
                 ...logs.map((item) {
-                  final id = item['id_karyawan']?.toString() ?? '-';
+                  final fullBarcode = item['id_karyawan']?.toString() ?? '-';
+                  final displayName = _extractEmployeeInfo(fullBarcode);
                   final statusPengawas = item['status_pengawas']?.toString() ?? 'PENDING';
                   final statusSecurity = item['status_security']?.toString() ?? 'PENDING';
+                  final pengawasScanBy = item['pengawas_scanned_by']?.toString() ?? '-';
+                  final securityScanBy = item['security_scanned_by']?.toString() ?? '-';
                   final label = _statusLabel(statusPengawas, statusSecurity);
                   final isDone = statusPengawas == 'ACC' && statusSecurity == 'ACC';
                   return Container(
@@ -179,8 +224,10 @@ class _StatusTabState extends State<StatusTab> {
                         ),
                       ),
                       title: Text(
-                        id,
+                        displayName,
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Padding(
                         padding: const EdgeInsets.only(top: 8),
@@ -200,6 +247,25 @@ class _StatusTabState extends State<StatusTab> {
                               label,
                               style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
                             ),
+                            const SizedBox(height: 8),
+                            if (pengawasScanBy != '-')
+                              Text(
+                                'Scan pengawas: $pengawasScanBy',
+                                style: TextStyle(
+                                  color: Colors.blue.shade600,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            if (securityScanBy != '-')
+                              Text(
+                                'Scan security: $securityScanBy',
+                                style: TextStyle(
+                                  color: Colors.green.shade600,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
                           ],
                         ),
                       ),

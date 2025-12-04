@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'auth_service.dart';
+import 'settings_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -228,6 +229,24 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const SettingsPage(isFromLogin: true),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.settings),
+                  label: const Text('Server Settings'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    side: BorderSide(color: Colors.grey.shade400),
+                  ),
+                ),
+                const SizedBox(height: 24),
               ],
             ),
           ),
