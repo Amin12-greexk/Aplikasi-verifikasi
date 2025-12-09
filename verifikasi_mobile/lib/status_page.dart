@@ -62,13 +62,22 @@ class _StatusTabState extends State<StatusTab> {
 
   String _formatTimeLabel(String? raw) {
     if (raw == null || raw.isEmpty) return '-';
+    // Try full DateTime parse (handles "2025-12-08T14:22:00" or "2025-12-08 14:22:00")
     final normalized = raw.contains('T') ? raw : raw.replaceFirst(' ', 'T');
     final dt = DateTime.tryParse(normalized);
-    if (dt == null) return '-';
-    final local = dt.toLocal();
-    final hh = local.hour.toString().padLeft(2, '0');
-    final mm = local.minute.toString().padLeft(2, '0');
-    return '$hh:$mm';
+    if (dt != null) {
+      final local = dt.toLocal();
+      final hh = local.hour.toString().padLeft(2, '0');
+      final mm = local.minute.toString().padLeft(2, '0');
+      return '$hh:$mm';
+    }
+
+    // Fallback: extract HH:mm pattern directly from the string if parsing failed
+    final hhmm = RegExp(r'(\d{1,2}:\d{2})').firstMatch(raw)?.group(1);
+    if (hhmm != null) return hhmm;
+
+    // Last resort: return trimmed raw string (first 16 chars) so user still sees something
+    return raw.length > 16 ? raw.substring(0, 16) : raw;
   }
 
   Future<List<Map<String, dynamic>>> _initializeData() async {
@@ -271,6 +280,7 @@ class _StatusTabState extends State<StatusTab> {
                               time: pengawasScanAt,
                               color: Colors.blue.shade600,
                               icon: Icons.admin_panel_settings,
+                              hideIfEmpty: true,
                             ),
                             const SizedBox(height: 4),
                             _scanInfoRow(
@@ -279,6 +289,7 @@ class _StatusTabState extends State<StatusTab> {
                               time: securityScanAt,
                               color: Colors.green.shade600,
                               icon: Icons.security,
+                              hideIfEmpty: true,
                             ),
                           ],
                         ),
@@ -300,51 +311,52 @@ Widget _scanInfoRow({
   required String time,
   required Color color,
   required IconData icon,
+  bool hideIfEmpty = false,
 }) {
-  final hasData = by != '-' || time != '-';
+  final hasData = (by != '-' && by.trim().isNotEmpty) || (time != '-' && time.trim().isNotEmpty);
+  if (hideIfEmpty && !hasData) return const SizedBox.shrink();
+
   return Row(
     crossAxisAlignment: CrossAxisAlignment.center,
     children: [
       Icon(icon, size: 14, color: color),
       const SizedBox(width: 6),
       Text(
-        '$label${hasData ? ':' : ''}',
+        '$label:',
         style: TextStyle(
           color: color,
           fontSize: 11,
           fontWeight: FontWeight.w700,
         ),
       ),
-      if (hasData) ...[
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            by != '-' ? by : 'Belum ada',
-            style: TextStyle(
-              color: Colors.grey.shade800,
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-            ),
-            overflow: TextOverflow.ellipsis,
-          ),
+      const SizedBox(width: 6),
+      Flexible(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (by != '-' && by.trim().isNotEmpty)
+              Text(
+                by,
+                style: TextStyle(
+                  color: Colors.grey.shade800,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            if (time != '-' && time.trim().isNotEmpty)
+              Text(
+                'Jam: $time',
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+          ],
         ),
-        const SizedBox(width: 6),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(
-            time,
-            style: TextStyle(
-              color: color,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ],
+      ),
     ],
   );
 }

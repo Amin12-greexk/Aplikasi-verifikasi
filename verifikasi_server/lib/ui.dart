@@ -61,6 +61,17 @@ class _ServerDashboardState extends State<ServerDashboard> {
   DateTime? _selectedStartDate;
   DateTime? _selectedEndDate;
 
+  String _formatTime(String? raw) {
+    if (raw == null || raw.isEmpty) return '-';
+    final normalized = raw.contains('T') ? raw : raw.replaceFirst(' ', 'T');
+    final dt = DateTime.tryParse(normalized);
+    if (dt == null) return '-';
+    final local = dt.toLocal();
+    final hh = local.hour.toString().padLeft(2, '0');
+    final mm = local.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -341,6 +352,24 @@ class _ServerDashboardState extends State<ServerDashboard> {
                       ),
                     ),
                   ),
+                  DataColumn(
+                    label: Text(
+                      'Jam Pengawas',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
+                  ),
+                  DataColumn(
+                    label: Text(
+                      'Jam Security',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
+                  ),
                 ],
                 rows: widget.logs
                     .map((log) => DataRow(
@@ -361,6 +390,20 @@ class _ServerDashboardState extends State<ServerDashboard> {
                             DataCell(
                               _buildStatusBadge(
                                 log['status_security']?.toString() ?? 'PENDING',
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                _formatTime(
+                                  log['pengawas_scanned_at']?.toString() ?? log['created_at']?.toString(),
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                _formatTime(
+                                  log['security_scanned_at']?.toString() ?? log['created_at']?.toString(),
+                                ),
                               ),
                             ),
                           ],
