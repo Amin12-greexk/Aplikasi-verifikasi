@@ -60,6 +60,17 @@ class _StatusTabState extends State<StatusTab> {
     return '';
   }
 
+  String _formatTimeLabel(String? raw) {
+    if (raw == null || raw.isEmpty) return '-';
+    final normalized = raw.contains('T') ? raw : raw.replaceFirst(' ', 'T');
+    final dt = DateTime.tryParse(normalized);
+    if (dt == null) return '-';
+    final local = dt.toLocal();
+    final hh = local.hour.toString().padLeft(2, '0');
+    final mm = local.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
+  }
+
   Future<List<Map<String, dynamic>>> _initializeData() async {
     try {
       // Check if should refresh and clear old data
@@ -191,6 +202,12 @@ class _StatusTabState extends State<StatusTab> {
                   final statusSecurity = item['status_security']?.toString() ?? 'PENDING';
                   final pengawasScanBy = item['pengawas_scanned_by']?.toString() ?? '-';
                   final securityScanBy = item['security_scanned_by']?.toString() ?? '-';
+                  final pengawasScanAt = _formatTimeLabel(
+                    item['pengawas_scanned_at']?.toString() ?? item['created_at']?.toString(),
+                  );
+                  final securityScanAt = _formatTimeLabel(
+                    item['security_scanned_at']?.toString(),
+                  );
                   final label = _statusLabel(statusPengawas, statusSecurity);
                   final isDone = statusPengawas == 'ACC' && statusSecurity == 'ACC';
                   return Container(
@@ -248,24 +265,21 @@ class _StatusTabState extends State<StatusTab> {
                               style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
                             ),
                             const SizedBox(height: 8),
-                            if (pengawasScanBy != '-')
-                              Text(
-                                'Scan pengawas: $pengawasScanBy',
-                                style: TextStyle(
-                                  color: Colors.blue.shade600,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            if (securityScanBy != '-')
-                              Text(
-                                'Scan security: $securityScanBy',
-                                style: TextStyle(
-                                  color: Colors.green.shade600,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
+                            _scanInfoRow(
+                              label: 'Pengawas',
+                              by: pengawasScanBy,
+                              time: pengawasScanAt,
+                              color: Colors.blue.shade600,
+                              icon: Icons.admin_panel_settings,
+                            ),
+                            const SizedBox(height: 4),
+                            _scanInfoRow(
+                              label: 'Security',
+                              by: securityScanBy,
+                              time: securityScanAt,
+                              color: Colors.green.shade600,
+                              icon: Icons.security,
+                            ),
                           ],
                         ),
                       ),
@@ -278,6 +292,61 @@ class _StatusTabState extends State<StatusTab> {
       ),
     );
   }
+}
+
+Widget _scanInfoRow({
+  required String label,
+  required String by,
+  required String time,
+  required Color color,
+  required IconData icon,
+}) {
+  final hasData = by != '-' || time != '-';
+  return Row(
+    crossAxisAlignment: CrossAxisAlignment.center,
+    children: [
+      Icon(icon, size: 14, color: color),
+      const SizedBox(width: 6),
+      Text(
+        '$label${hasData ? ':' : ''}',
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      if (hasData) ...[
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            by != '-' ? by : 'Belum ada',
+            style: TextStyle(
+              color: Colors.grey.shade800,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            time,
+            style: TextStyle(
+              color: color,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    ],
+  );
 }
 
 class _StatRow extends StatelessWidget {

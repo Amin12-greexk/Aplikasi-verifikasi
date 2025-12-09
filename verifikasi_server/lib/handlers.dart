@@ -71,12 +71,30 @@ Future<Router> buildRouter(Database db) async {
       );
 
   // Helper function to save to history
-  void _saveToHistory(String idKaryawan, String statusPengawas, String statusSecurity, [String? pengawasBy, String? securityBy]) {
+  void _saveToHistory(
+    String idKaryawan,
+    String statusPengawas,
+    String statusSecurity, [
+    String? pengawasBy,
+    String? securityBy,
+    String? pengawasAt,
+    String? securityAt,
+  ]) {
     final today = DateTime.now();
+    final nowIso = DateTime.now().toIso8601String();
     final tanggal = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
     db.execute(
-      'INSERT INTO log_pulang_history(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, security_scanned_by, tanggal) VALUES(?, ?, ?, ?, ?, ?)',
-      [idKaryawan, statusPengawas, statusSecurity, pengawasBy, securityBy, tanggal],
+      'INSERT INTO log_pulang_history(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, security_scanned_by, pengawas_scanned_at, security_scanned_at, tanggal) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        idKaryawan,
+        statusPengawas,
+        statusSecurity,
+        pengawasBy,
+        securityBy,
+        pengawasAt ?? nowIso,
+        securityAt ?? nowIso,
+        tanggal
+      ],
     );
   }
 
@@ -139,15 +157,17 @@ Future<Router> buildRouter(Database db) async {
     try {
       // Use retry logic for database write operation
       await _retryDbOperation(() async {
+        final nowIso = DateTime.now().toIso8601String();
         db.execute(
-          'INSERT INTO log_pulang(id_karyawan, status_pengawas, status_security, pengawas_scanned_by) VALUES(?, "ACC", "PENDING", ?) '
-          'ON CONFLICT(id_karyawan) DO UPDATE SET status_pengawas="ACC", pengawas_scanned_by=?;',
-          [id, username, username],
+          'INSERT INTO log_pulang(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, pengawas_scanned_at) VALUES(?, "ACC", "PENDING", ?, ?) '
+          'ON CONFLICT(id_karyawan) DO UPDATE SET status_pengawas="ACC", pengawas_scanned_by=?, pengawas_scanned_at=?;',
+          [id, username, nowIso, username, nowIso],
         );
         return null;
       });
 
-      _saveToHistory(id, 'ACC', 'PENDING', username);
+      final nowIso = DateTime.now().toIso8601String();
+      _saveToHistory(id, 'ACC', 'PENDING', username, null, nowIso, null);
       final row = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [id]).first;
       return ok(row);
     } catch (e) {
@@ -171,12 +191,16 @@ Future<Router> buildRouter(Database db) async {
       if (row['status_pengawas'] != 'ACC') return bad('Pengawas belum ACC');
 
       // Use retry logic for database write operation
+      final nowIso = DateTime.now().toIso8601String();
       await _retryDbOperation(() async {
-        db.execute('UPDATE log_pulang SET status_security="ACC", security_scanned_by=? WHERE id_karyawan=?', [username, id]);
+        db.execute(
+          'UPDATE log_pulang SET status_security="ACC", security_scanned_by=?, security_scanned_at=? WHERE id_karyawan=?',
+          [username, nowIso, id],
+        );
         return null;
       });
 
-      _saveToHistory(id, 'ACC', 'ACC', username, username);
+      _saveToHistory(id, 'ACC', 'ACC', row['pengawas_scanned_by']?.toString(), username, row['pengawas_scanned_at']?.toString(), nowIso);
       final updated = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [id]).first;
       return ok(updated);
     } catch (e) {
@@ -203,6 +227,9 @@ Future<Router> buildRouter(Database db) async {
               'status_security': r['status_security'],
               'pengawas_scanned_by': r['pengawas_scanned_by'],
               'security_scanned_by': r['security_scanned_by'],
+              'pengawas_scanned_at': r['pengawas_scanned_at'],
+              'security_scanned_at': r['security_scanned_at'],
+              'created_at': r['created_at'],
             })
         .toList();
     return ok({'logs': list});
@@ -223,7 +250,12 @@ Future<Router> buildRouter(Database db) async {
                 'id_karyawan': r['id_karyawan'],
                 'status_pengawas': r['status_pengawas'],
                 'status_security': r['status_security'],
+                'pengawas_scanned_by': r['pengawas_scanned_by'],
+                'security_scanned_by': r['security_scanned_by'],
+                'pengawas_scanned_at': r['pengawas_scanned_at'],
+                'security_scanned_at': r['security_scanned_at'],
                 'tanggal': r['tanggal'],
+                'created_at': r['created_at'],
               })
           .toList();
       return ok({'logs': list, 'tanggal': tanggal, 'total': list.length});
@@ -257,7 +289,15 @@ Future<Router> buildRouter(Database db) async {
         final id = log['id_karyawan'];
         final pengawas = log['status_pengawas'];
         final security = log['status_security'];
-        _saveToHistory(id, pengawas, security);
+        _saveToHistory(
+          id,
+          pengawas,
+          security,
+          log['pengawas_scanned_by']?.toString(),
+          log['security_scanned_by']?.toString(),
+          log['pengawas_scanned_at']?.toString(),
+          log['security_scanned_at']?.toString(),
+        );
       }
 
       // Clear current logs table

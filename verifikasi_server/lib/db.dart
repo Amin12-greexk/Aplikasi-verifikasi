@@ -28,6 +28,8 @@ Future<Database> initDb(String path) async {
       status_security TEXT NOT NULL DEFAULT 'PENDING',
       pengawas_scanned_by TEXT,
       security_scanned_by TEXT,
+      pengawas_scanned_at DATETIME,
+      security_scanned_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   ''');
@@ -41,6 +43,8 @@ Future<Database> initDb(String path) async {
       status_security TEXT NOT NULL,
       pengawas_scanned_by TEXT,
       security_scanned_by TEXT,
+      pengawas_scanned_at DATETIME,
+      security_scanned_at DATETIME,
       tanggal DATE NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -65,6 +69,18 @@ Future<Database> initDb(String path) async {
   }
 
   try {
+    db.execute('ALTER TABLE log_pulang ADD COLUMN pengawas_scanned_at DATETIME;');
+  } catch (_) {
+    // Column already exists
+  }
+
+  try {
+    db.execute('ALTER TABLE log_pulang ADD COLUMN security_scanned_at DATETIME;');
+  } catch (_) {
+    // Column already exists
+  }
+
+  try {
     db.execute('ALTER TABLE log_pulang_history ADD COLUMN pengawas_scanned_by TEXT;');
   } catch (_) {
     // Column already exists
@@ -75,6 +91,26 @@ Future<Database> initDb(String path) async {
   } catch (_) {
     // Column already exists
   }
+
+  try {
+    db.execute('ALTER TABLE log_pulang_history ADD COLUMN pengawas_scanned_at DATETIME;');
+  } catch (_) {
+    // Column already exists
+  }
+
+  try {
+    db.execute('ALTER TABLE log_pulang_history ADD COLUMN security_scanned_at DATETIME;');
+  } catch (_) {
+    // Column already exists
+  }
+
+  // Backfill timestamps for existing data
+  db.execute(
+    'UPDATE log_pulang SET pengawas_scanned_at = COALESCE(pengawas_scanned_at, created_at) WHERE status_pengawas = "ACC";',
+  );
+  db.execute(
+    'UPDATE log_pulang SET security_scanned_at = COALESCE(security_scanned_at, created_at) WHERE status_security = "ACC";',
+  );
 
   // Create default users if they don't exist
   try {

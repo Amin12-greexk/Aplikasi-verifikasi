@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:sqlite3/sqlite3.dart' hide Row;
 import 'package:window_manager/window_manager.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'admin_login.dart';
 import 'db.dart';
@@ -22,6 +23,15 @@ void main(List<String> args) async {
   // Detect if running in service mode
   final isServiceMode = args.contains('--service-mode');
   final minimizeToTray = args.contains('--minimize-to-tray');
+
+  // Enable wakelock to prevent system sleep
+  // This keeps the app running and able to receive network requests
+  try {
+    await WakelockPlus.enable();
+    stdout.writeln('[WAKELOCK] System sleep prevention enabled');
+  } catch (e) {
+    stderr.writeln('[WAKELOCK] Failed to enable wakelock: $e');
+  }
 
   // Initialize database
   final db = await initDb('log.db');
