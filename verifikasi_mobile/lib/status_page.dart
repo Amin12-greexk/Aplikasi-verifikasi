@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'api_client_retry.dart'; // Use retry version
 import 'daily_refresh_manager.dart';
+import 'offline_queue.dart';
 
 class StatusTab extends StatefulWidget {
   const StatusTab({super.key});
@@ -11,7 +12,7 @@ class StatusTab extends StatefulWidget {
 }
 
 class _StatusTabState extends State<StatusTab> {
-  late Future<List<Map<String, dynamic>>> _future;
+  late Future<Map<String, dynamic>> _future;
 
   @override
   void initState() {
@@ -80,7 +81,7 @@ class _StatusTabState extends State<StatusTab> {
     return raw.length > 16 ? raw.substring(0, 16) : raw;
   }
 
-  Future<List<Map<String, dynamic>>> _initializeData() async {
+  Future<Map<String, dynamic>> _initializeData() async {
     try {
       // Check if should refresh and clear old data
       final shouldRefresh = await DailyRefreshManager.shouldRefreshDaily();
@@ -89,15 +90,21 @@ class _StatusTabState extends State<StatusTab> {
         // This will move current logs to history and clear the table
         try {
           await ApiClientRetry.dailyReset();
+          // Only mark as refreshed if the API call succeeded
+          await DailyRefreshManager.markAsRefreshed();
+          print('Daily reset completed successfully');
         } catch (e) {
           print('Daily reset error: $e');
-          // Continue anyway, just log the data
+          // Don't mark as refreshed - will retry next time the app opens
+          // Continue anyway to show current data
         }
       }
     } catch (e) {
       print('Error in _initializeData: $e');
     }
-    return await ApiClientRetry.fetchLogs();
+    final logs = await ApiClientRetry.fetchLogs();
+    final pending = await OfflineQueueManager.getPending();
+    return {'logs': logs, 'pending': pending};
   }
 
   Color _statusColor(String pengawas, String security) {
@@ -113,7 +120,7 @@ class _StatusTabState extends State<StatusTab> {
   }
 
   Future<void> _refresh() async {
-    final data = ApiClientRetry.fetchLogs();
+    final data = _initializeData();
     setState(() => _future = data);
     await data;
   }
@@ -123,7 +130,7 @@ class _StatusTabState extends State<StatusTab> {
     return RefreshIndicator(
       onRefresh: _refresh,
       color: Colors.green.shade600,
-      child: FutureBuilder<List<Map<String, dynamic>>>(
+      child: FutureBuilder<Map<String, dynamic>>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -154,18 +161,99 @@ class _StatusTabState extends State<StatusTab> {
               ],
             );
           }
-          final logs = snapshot.data ?? [];
+          final data = snapshot.data ?? {'logs': <Map<String, dynamic>>[], 'pending': <Map<String, dynamic>>[]};
+          final logs = (data['logs'] as List).cast<Map<String, dynamic>>();
+          final pendingQueue = (data['pending'] as List).cast<Map<String, dynamic>>();
           // Logs are already sorted newest first from server
           final accBoth = logs.where((e) => e['status_pengawas'] == 'ACC' && e['status_security'] == 'ACC').length;
           final accPengawas =
               logs.where((e) => e['status_pengawas'] == 'ACC' && e['status_security'] != 'ACC').length;
-          final pending = logs.length - accBoth - accPengawas;
+          final pendingCount = logs.length - accBoth - accPengawas;
           return ListView(
             padding: const EdgeInsets.only(bottom: 20),
             children: [
               const SizedBox(height: 8),
-              _StatRow(total: logs.length, accBoth: accBoth, accPengawas: accPengawas, pending: pending),
+              _StatRow(total: logs.length, accBoth: accBoth, accPengawas: accPengawas, pending: pendingCount),
               const SizedBox(height: 20),
+              if (pendingQueue.isNotEmpty)
+                Card(
+                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  color: Colors.orange.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.cloud_off, color: Colors.orange.shade700, size: 18),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Pending sync (${pendingQueue.length})',
+                              style: TextStyle(
+                                color: Colors.orange.shade800,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        ...pendingQueue.map((q) {
+                          final id = q['id']?.toString() ?? '-';
+                          final role = q['role']?.toString() ?? '-';
+                          final created = _formatTimeLabel(q['created_at']?.toString());
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.orange.shade100,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    role.toUpperCase(),
+                                    style: TextStyle(
+                                      color: Colors.orange.shade800,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    id,
+                                    style: TextStyle(
+                                      color: Colors.grey.shade800,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Jam: $created',
+                                  style: TextStyle(
+                                    color: Colors.orange.shade800,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Akan otomatis dikirim saat koneksi kembali.',
+                          style: TextStyle(color: Colors.orange.shade700, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               if (logs.isEmpty)
                 Padding(
                   padding: const EdgeInsets.all(24),

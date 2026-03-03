@@ -100,23 +100,24 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
   Future<void> _checkDailyRefresh() async {
     final shouldRefresh = await DailyRefreshManager.shouldRefreshDaily();
     if (shouldRefresh && mounted) {
-      // Show notification that data has been reset
+      // Show notification that a new day has started
+      // The actual reset will happen when StatusTab initializes
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Row(
             children: [
-              Icon(Icons.refresh, color: Colors.white),
+              Icon(Icons.wb_sunny, color: Colors.white),
               SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Data verifikasi telah direset untuk hari baru. Log tersimpan di server.',
+                  'Hari baru dimulai! Data akan direset otomatis.',
                   maxLines: 2,
                 ),
               ),
             ],
           ),
           backgroundColor: Colors.green.shade600,
-          duration: const Duration(seconds: 4),
+          duration: const Duration(seconds: 3),
         ),
       );
     }

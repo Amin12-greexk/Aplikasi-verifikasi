@@ -16,6 +16,10 @@ Future<HttpServer> startServerHeadless(Database db) async {
     final server = await io.serve(handler, InternetAddress.anyIPv4, 8080);
     stdout.writeln('Server jalan di http://${server.address.address}:${server.port}');
     stdout.writeln('[HEADLESS MODE] Server berjalan tanpa UI');
+
+    // Start the automatic daily reset scheduler
+    startDailyResetScheduler(db);
+
     return server;
   } catch (e) {
     stderr.writeln('Error starting server: $e');
@@ -35,6 +39,10 @@ Future<HttpServer> startServerBackground(Database db) async {
     final server = await io.serve(handler, InternetAddress.anyIPv4, 8080);
     stdout.writeln('Server jalan di http://${server.address.address}:${server.port}');
     stdout.writeln('[BACKGROUND MODE] Server berjalan bersama UI');
+
+    // Start the automatic daily reset scheduler
+    startDailyResetScheduler(db);
+
     return server;
   } catch (e) {
     stderr.writeln('Error starting server: $e');

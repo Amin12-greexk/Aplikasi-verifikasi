@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
@@ -54,6 +56,129 @@ Future<T> _retryDbOperation<T>(Future<T> Function() operation, {int maxRetries =
     }
   }
   throw Exception('Max retries exceeded');
+}
+
+/// Performs the daily reset operation
+/// Moves all current logs to history and clears the log_pulang table
+Future<Map<String, dynamic>> performDailyReset(Database db) async {
+  try {
+    final today = DateTime.now();
+    final tanggal = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+
+    return await _retryDbOperation(() async {
+      // Use transaction for atomic operation
+      db.execute('BEGIN TRANSACTION');
+
+      try {
+        // Get all current logs
+        final currentLogs = db.select('SELECT * FROM log_pulang');
+        int movedCount = 0;
+
+        // Move all current logs to history
+        for (final log in currentLogs) {
+          db.execute(
+            'INSERT INTO log_pulang_history(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, security_scanned_by, pengawas_scanned_at, security_scanned_at, tanggal) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
+            [
+              log['id_karyawan'],
+              log['status_pengawas'],
+              log['status_security'],
+              log['pengawas_scanned_by'],
+              log['security_scanned_by'],
+              log['pengawas_scanned_at'],
+              log['security_scanned_at'],
+              tanggal,
+            ],
+          );
+          movedCount++;
+        }
+
+        // Clear current logs table
+        db.execute('DELETE FROM log_pulang');
+
+        // Commit transaction
+        db.execute('COMMIT');
+
+        stdout.writeln('[DAILY RESET] Reset completed at ${DateTime.now().toIso8601String()}');
+        stdout.writeln('[DAILY RESET] Moved $movedCount logs to history for date: $tanggal');
+
+        return {
+          'success': true,
+          'message': 'Daily reset completed',
+          'tanggal': tanggal,
+          'moved': movedCount,
+          'timestamp': DateTime.now().toIso8601String(),
+        };
+      } catch (e) {
+        // Rollback on error
+        db.execute('ROLLBACK');
+        stderr.writeln('[DAILY RESET] Error during reset: $e');
+        rethrow;
+      }
+    });
+  } catch (e) {
+    stderr.writeln('[DAILY RESET] Failed to perform daily reset: $e');
+    return {
+      'success': false,
+      'message': 'Daily reset failed',
+      'error': e.toString(),
+    };
+  }
+}
+
+/// Starts the automatic daily reset scheduler
+/// Resets data at 00:00 every day
+Timer? _dailyResetTimer;
+
+void startDailyResetScheduler(Database db) {
+  // Cancel existing timer if any
+  _dailyResetTimer?.cancel();
+
+  void scheduleNextReset() {
+    final now = DateTime.now();
+
+    // Calculate next midnight (00:00)
+    final nextMidnight = DateTime(
+      now.year,
+      now.month,
+      now.day + 1,
+      0, // hour
+      0, // minute
+      0, // second
+    );
+
+    final duration = nextMidnight.difference(now);
+
+    stdout.writeln('[SCHEDULER] Daily reset scheduled for: ${nextMidnight.toIso8601String()}');
+    stdout.writeln('[SCHEDULER] Time until next reset: ${duration.inHours}h ${duration.inMinutes % 60}m ${duration.inSeconds % 60}s');
+
+    // Schedule the reset
+    _dailyResetTimer = Timer(duration, () async {
+      stdout.writeln('[SCHEDULER] Triggering automatic daily reset at 00:00');
+
+      // Perform the reset
+      final result = await performDailyReset(db);
+
+      if (result['success'] == true) {
+        stdout.writeln('[SCHEDULER] Automatic reset successful: ${result['message']}');
+      } else {
+        stderr.writeln('[SCHEDULER] Automatic reset failed: ${result['error']}');
+      }
+
+      // Schedule the next reset for tomorrow
+      scheduleNextReset();
+    });
+  }
+
+  // Start the scheduler
+  scheduleNextReset();
+  stdout.writeln('[SCHEDULER] Daily reset scheduler initialized');
+}
+
+/// Stops the daily reset scheduler
+void stopDailyResetScheduler() {
+  _dailyResetTimer?.cancel();
+  _dailyResetTimer = null;
+  stdout.writeln('[SCHEDULER] Daily reset scheduler stopped');
 }
 
 Future<Router> buildRouter(Database db) async {
@@ -280,30 +405,18 @@ Future<Router> buildRouter(Database db) async {
   // Daily reset endpoint - clears current day logs but keeps history
   r.post('/daily-reset', (Request req) async {
     try {
-      final today = DateTime.now();
-      final tanggal = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+      final result = await performDailyReset(db);
 
-      // First, move all current logs to history
-      final currentLogs = db.select('SELECT * FROM log_pulang');
-      for (final log in currentLogs) {
-        final id = log['id_karyawan'];
-        final pengawas = log['status_pengawas'];
-        final security = log['status_security'];
-        _saveToHistory(
-          id,
-          pengawas,
-          security,
-          log['pengawas_scanned_by']?.toString(),
-          log['security_scanned_by']?.toString(),
-          log['pengawas_scanned_at']?.toString(),
-          log['security_scanned_at']?.toString(),
-        );
+      if (result['success'] == true) {
+        return ok({
+          'message': result['message'],
+          'tanggal': result['tanggal'],
+          'cleared': result['moved'],
+          'timestamp': result['timestamp'],
+        });
+      } else {
+        return bad(result['error'].toString(), code: 500);
       }
-
-      // Clear current logs table
-      db.execute('DELETE FROM log_pulang');
-
-      return ok({'message': 'Daily reset completed', 'tanggal': tanggal, 'cleared': currentLogs.length});
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
