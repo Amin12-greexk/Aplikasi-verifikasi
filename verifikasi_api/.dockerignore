@@ -1,0 +1,9 @@
+.dart_tool
+.git
+.gitignore
+build
+coverage
+test
+*.db
+*.db-shm
+*.db-wal

@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:sqlite3/sqlite3.dart' hide Row;
 import 'package:window_manager/window_manager.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -12,6 +11,7 @@ import 'admin_login.dart';
 import 'db.dart';
 import 'headless_server.dart';
 import 'modern_dashboard.dart';
+import 'remote_client_app.dart';
 import 'modern_server_home.dart';
 import 'system_tray_manager.dart';
 import 'ui.dart';
@@ -19,6 +19,17 @@ import 'user_management.dart';
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  final isClientMode = args.contains('--client-mode');
+  final apiBaseUrl = _resolveApiBaseUrl(args);
+
+  if (isClientMode) {
+    stdout.writeln(
+      '[CLIENT MODE] Starting server interface client: $apiBaseUrl',
+    );
+    runApp(ClientServerApp(apiBaseUrl: apiBaseUrl));
+    return;
+  }
 
   // Detect if running in service mode
   final isServiceMode = args.contains('--service-mode');
@@ -38,7 +49,9 @@ void main(List<String> args) async {
 
   if (isServiceMode) {
     // Headless mode: Run HTTP server only, no UI
-    stdout.writeln('[SERVICE MODE] Starting verifikasi_server as Windows Service...');
+    stdout.writeln(
+      '[SERVICE MODE] Starting verifikasi_server as Windows Service...',
+    );
     await startServerHeadless(db);
     // Keep the application alive by preventing early exit
     // The service wrapper will manage the process lifecycle
@@ -50,11 +63,26 @@ void main(List<String> args) async {
     // Start the HTTP server in the background immediately
     unawaited(startServerBackground(db));
 
-    runApp(ServerApp(
-      db: db,
-      minimizeToTray: minimizeToTray,
-    ));
+    runApp(ServerApp(db: db, minimizeToTray: minimizeToTray));
   }
+}
+
+String _resolveApiBaseUrl(List<String> args) {
+  for (final arg in args) {
+    if (arg.startsWith('--api-url=')) {
+      final value = arg.substring('--api-url='.length).trim();
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+  }
+
+  final envUrl = Platform.environment['API_BASE_URL']?.trim();
+  if (envUrl != null && envUrl.isNotEmpty) {
+    return envUrl;
+  }
+
+  return 'http://localhost:8080';
 }
 
 // Helper to run future without awaiting
@@ -66,11 +94,7 @@ class ServerApp extends StatefulWidget {
   final Database db;
   final bool minimizeToTray;
 
-  const ServerApp({
-    required this.db,
-    this.minimizeToTray = false,
-    super.key,
-  });
+  const ServerApp({required this.db, this.minimizeToTray = false, super.key});
 
   @override
   State<ServerApp> createState() => _ServerAppState();
@@ -266,21 +290,27 @@ class _ServerHomeState extends State<ServerHome> {
         [_viewingDate!],
       );
       return rows
-          .map((r) => {
-                'id_karyawan': r['id_karyawan'],
-                'status_pengawas': r['status_pengawas'],
-                'status_security': r['status_security'],
-              })
+          .map(
+            (r) => {
+              'id_karyawan': r['id_karyawan'],
+              'status_pengawas': r['status_pengawas'],
+              'status_security': r['status_security'],
+            },
+          )
           .toList();
     } else {
       // Get current logs
-      final rows = widget.db.select('SELECT * FROM log_pulang ORDER BY id_karyawan ASC');
+      final rows = widget.db.select(
+        'SELECT * FROM log_pulang ORDER BY id_karyawan ASC',
+      );
       return rows
-          .map((r) => {
-                'id_karyawan': r['id_karyawan'],
-                'status_pengawas': r['status_pengawas'],
-                'status_security': r['status_security'],
-              })
+          .map(
+            (r) => {
+              'id_karyawan': r['id_karyawan'],
+              'status_pengawas': r['status_pengawas'],
+              'status_security': r['status_security'],
+            },
+          )
           .toList();
     }
   }
@@ -332,7 +362,9 @@ class _ServerHomeState extends State<ServerHome> {
             children: [
               Expanded(
                 child: Text(
-                  _viewingDate != null ? 'Log History: $_viewingDate' : 'Log Hari Ini',
+                  _viewingDate != null
+                      ? 'Log History: $_viewingDate'
+                      : 'Log Hari Ini',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -412,7 +444,8 @@ class DateHistoryPickerDialog extends StatefulWidget {
   });
 
   @override
-  State<DateHistoryPickerDialog> createState() => _DateHistoryPickerDialogState();
+  State<DateHistoryPickerDialog> createState() =>
+      _DateHistoryPickerDialogState();
 }
 
 class _DateHistoryPickerDialogState extends State<DateHistoryPickerDialog> {
@@ -485,16 +518,23 @@ class _DateHistoryPickerDialogState extends State<DateHistoryPickerDialog> {
                         return Container(
                           margin: const EdgeInsets.symmetric(vertical: 4),
                           decoration: BoxDecoration(
-                            color: isSelected ? Colors.green.shade100 : Colors.white,
+                            color: isSelected
+                                ? Colors.green.shade100
+                                : Colors.white,
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(
-                              color: isSelected ? Colors.green.shade600 : Colors.grey.shade300,
+                              color: isSelected
+                                  ? Colors.green.shade600
+                                  : Colors.grey.shade300,
                             ),
                           ),
                           child: ListTile(
                             title: Text(date),
                             trailing: isSelected
-                                ? Icon(Icons.check, color: Colors.green.shade600)
+                                ? Icon(
+                                    Icons.check,
+                                    color: Colors.green.shade600,
+                                  )
                                 : null,
                             onTap: () {
                               setState(() => _selectedDate = date);
@@ -519,13 +559,12 @@ class _DateHistoryPickerDialogState extends State<DateHistoryPickerDialog> {
           onPressed: () {
             widget.onReset();
           },
-          child: Text(
-            'Reset',
-            style: TextStyle(color: Colors.orange.shade600),
-          ),
+          child: Text('Reset', style: TextStyle(color: Colors.orange.shade600)),
         ),
         ElevatedButton(
-          onPressed: _selectedDate == null ? null : () => widget.onDateSelected(_selectedDate!),
+          onPressed: _selectedDate == null
+              ? null
+              : () => widget.onDateSelected(_selectedDate!),
           child: const Text('Lihat Log'),
         ),
       ],
