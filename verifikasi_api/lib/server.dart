@@ -14,6 +14,7 @@ Future<HttpServer> startServer({
   final router = await buildRouter(db);
   final handler = Pipeline()
       .addMiddleware(logRequests())
+      .addMiddleware(_corsMiddleware())
       .addHandler(router.call);
 
   final server = await io.serve(handler, host ?? InternetAddress.anyIPv4, port);
@@ -25,6 +26,27 @@ Future<HttpServer> startServer({
   startDailyResetScheduler(db);
 
   return server;
+}
+
+Middleware _corsMiddleware() {
+  return (Handler innerHandler) {
+    return (Request request) async {
+      if (request.method == 'OPTIONS') {
+        return Response.ok('', headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Origin, Content-Type, Authorization',
+        });
+      }
+
+      final response = await innerHandler(request);
+      return response.change(headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Origin, Content-Type, Authorization',
+      });
+    };
+  };
 }
 
 Future<void> shutdownServer(HttpServer server) async {
