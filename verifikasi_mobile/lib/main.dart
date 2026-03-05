@@ -1,18 +1,23 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 
-import 'auth_service.dart';
-import 'config.dart';
-import 'crud_log_page.dart';
-import 'daily_refresh_manager.dart';
-import 'login_page.dart';
-import 'scanner_page.dart';
-import 'settings_page.dart';
-import 'status_page.dart';
+import 'core/config/config.dart';
+import 'core/config/dev_visibility.dart';
+import 'core/services/auth_service.dart';
+import 'core/services/daily_refresh_manager.dart';
+import 'core/theme/app_colors.dart';
+import 'core/theme/app_theme.dart';
+import 'features/attendance/attendance_page.dart';
+import 'features/auth/login_page.dart';
+import 'features/history/history_page.dart';
+import 'features/home/home_page.dart';
+import 'features/more/more_page.dart';
+import 'features/verification/crud_log_page.dart';
+import 'features/verification/verification_tab.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ServerConfig.init();
+  await DevVisibility.init();
   await AuthService.init();
   runApp(const MyApp());
 }
@@ -23,43 +28,9 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Verifikasi Pulang',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.green.shade600,
-          brightness: Brightness.light,
-        ),
-        scaffoldBackgroundColor: const Color(0xFFF8FAFB),
-        appBarTheme: AppBarTheme(
-          backgroundColor: Colors.white,
-          elevation: 0,
-          surfaceTintColor: Colors.transparent,
-        ),
-        navigationBarTheme: NavigationBarThemeData(
-          indicatorColor: Colors.green.shade100,
-          backgroundColor: Colors.white,
-          elevation: 8,
-          labelTextStyle: WidgetStateProperty.all(
-            TextStyle(color: Colors.green.shade800, fontWeight: FontWeight.w600, fontSize: 12),
-          ),
-          iconTheme: WidgetStateProperty.resolveWith((states) {
-            if (states.contains(WidgetState.selected)) {
-              return IconThemeData(color: Colors.green.shade700, size: 26);
-            }
-            return IconThemeData(color: Colors.grey.shade500, size: 24);
-          }),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.green.shade600,
-            foregroundColor: Colors.white,
-            elevation: 4,
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        ),
-      ),
+      title: 'Verifikasi Mobile',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.lightTheme,
       home: AuthService.isLoggedIn ? const HomeShell() : const LoginPage(),
       routes: {
         '/home': (context) => const HomeShell(),
@@ -69,6 +40,10 @@ class MyApp extends StatelessWidget {
   }
 }
 
+/// Main shell with 5-tab bottom navigation.
+/// Role-based visibility:
+///   Pengawas: Beranda, Verifikasi, Absensi, Riwayat, Lainnya
+///   Security: Beranda, Verifikasi, Riwayat, Lainnya (no Absensi)
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -77,14 +52,18 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
-  int _index = 0;
+  late int _index;
   late AnimationController _headerAnimationController;
 
+  bool get _isPengawas => AuthService.isPengawas();
+
+  // Default tab: Verifikasi (index 1 for both roles)
   @override
   void initState() {
     super.initState();
+    _index = 1;
     _headerAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 600),
       vsync: this,
     )..forward();
 
@@ -100,8 +79,6 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
   Future<void> _checkDailyRefresh() async {
     final shouldRefresh = await DailyRefreshManager.shouldRefreshDaily();
     if (shouldRefresh && mounted) {
-      // Show notification that a new day has started
-      // The actual reset will happen when StatusTab initializes
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Row(
@@ -116,201 +93,190 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
               ),
             ],
           ),
-          backgroundColor: Colors.green.shade600,
+          backgroundColor: AppColors.primary,
           duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
         ),
       );
     }
   }
 
+  /// Build the appropriate body based on current tab index and role.
+  Widget _body() {
+    if (_isPengawas) {
+      // Pengawas: 5 tabs [Beranda, Verifikasi, Absensi, Riwayat, Lainnya]
+      switch (_index) {
+        case 0:
+          return const HomePage();
+        case 1:
+          return const VerificationTab();
+        case 2:
+          return const AttendancePage();
+        case 3:
+          return const HistoryPage();
+        case 4:
+          return const MorePage();
+        default:
+          return const VerificationTab();
+      }
+    } else {
+      // Security: 4 tabs [Beranda, Verifikasi, Riwayat, Lainnya]
+      switch (_index) {
+        case 0:
+          return const HomePage();
+        case 1:
+          return const VerificationTab();
+        case 2:
+          return const HistoryPage();
+        case 3:
+          return const MorePage();
+        default:
+          return const VerificationTab();
+      }
+    }
+  }
+
+  List<NavigationDestination> _buildDestinations() {
+    if (_isPengawas) {
+      return [
+        NavigationDestination(
+          icon: const Icon(Icons.home_outlined),
+          selectedIcon: const Icon(Icons.home),
+          label: 'Beranda',
+        ),
+        NavigationDestination(
+          icon: const Icon(Icons.qr_code_scanner_outlined),
+          selectedIcon: const Icon(Icons.qr_code_scanner),
+          label: 'Verifikasi',
+        ),
+        NavigationDestination(
+          icon: const Icon(Icons.fingerprint_outlined),
+          selectedIcon: const Icon(Icons.fingerprint),
+          label: 'Absensi',
+        ),
+        NavigationDestination(
+          icon: const Icon(Icons.history_outlined),
+          selectedIcon: const Icon(Icons.history),
+          label: 'Riwayat',
+        ),
+        NavigationDestination(
+          icon: const Icon(Icons.more_horiz_outlined),
+          selectedIcon: const Icon(Icons.more_horiz),
+          label: 'Lainnya',
+        ),
+      ];
+    } else {
+      return [
+        NavigationDestination(
+          icon: const Icon(Icons.home_outlined),
+          selectedIcon: const Icon(Icons.home),
+          label: 'Beranda',
+        ),
+        NavigationDestination(
+          icon: const Icon(Icons.qr_code_scanner_outlined),
+          selectedIcon: const Icon(Icons.qr_code_scanner),
+          label: 'Verifikasi',
+        ),
+        NavigationDestination(
+          icon: const Icon(Icons.history_outlined),
+          selectedIcon: const Icon(Icons.history),
+          label: 'Riwayat',
+        ),
+        NavigationDestination(
+          icon: const Icon(Icons.more_horiz_outlined),
+          selectedIcon: const Icon(Icons.more_horiz),
+          label: 'Lainnya',
+        ),
+      ];
+    }
+  }
+
+  /// Build the header section with user info and role indicator.
   Widget _buildHeader() {
-    final isPengawas = AuthService.isPengawas();
     final userName = AuthService.username ?? 'User';
+    final roleName = _isPengawas ? 'Pengawas' : 'Security';
+    final gradientColors = _isPengawas
+        ? AppColors.pengawasGradient
+        : AppColors.primaryGradient;
 
     return FadeTransition(
       opacity: _headerAnimationController,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: isPengawas
-                ? [Colors.blue.shade600, Colors.blue.shade500]
-                : [Colors.green.shade600, Colors.green.shade500],
+            colors: gradientColors,
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
-          borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
+          borderRadius: const BorderRadius.vertical(
+            bottom: Radius.circular(22),
+          ),
           boxShadow: [
             BoxShadow(
-              color: (isPengawas ? Colors.blue.shade900 : Colors.green.shade900)
-                  .withAlpha(40),
+              color: gradientColors.first.withAlpha(40),
               blurRadius: 16,
-              offset: const Offset(0, 8),
+              offset: const Offset(0, 6),
             ),
           ],
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
           children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withAlpha(200),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    isPengawas ? Icons.badge : Icons.security,
-                    color: isPengawas ? Colors.blue.shade600 : Colors.green.shade600,
-                    size: 32,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Verifikasi Pulang',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        isPengawas ? 'Pengawas' : 'Security',
-                        style: TextStyle(
-                          color: Colors.white.withAlpha(200),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w400,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.settings, color: Colors.white),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const SettingsPage(),
-                      ),
-                    );
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.white.withAlpha(180),
-                borderRadius: BorderRadius.circular(8),
+                color: Colors.white.withAlpha(40),
+                borderRadius: BorderRadius.circular(12),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
+              child: Icon(
+                _isPengawas ? Icons.badge : Icons.security,
+                color: Colors.white,
+                size: 26,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(
-                    isPengawas ? Icons.verified_user : Icons.security,
-                    size: 16,
-                    color: isPengawas ? Colors.blue.shade600 : Colors.green.shade600,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    isPengawas
-                        ? 'Login sebagai: $userName (Pengawas)'
-                        : 'Login sebagai: $userName (Security)',
+                  const Text(
+                    'Verifikasi Mobile',
                     style: TextStyle(
-                      color: isPengawas ? Colors.blue.shade700 : Colors.green.shade700,
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    '$userName · $roleName',
+                    style: TextStyle(
+                      color: Colors.white.withAlpha(200),
                       fontSize: 12,
-                      fontWeight: FontWeight.w500,
+                      fontWeight: FontWeight.w400,
                     ),
                   ),
                 ],
               ),
             ),
+            // Data management (Pengawas only)
+            if (_isPengawas)
+              IconButton(
+                icon: const Icon(Icons.edit_note, color: Colors.white),
+                tooltip: 'Kelola Data',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const CRUDLogPage()),
+                  );
+                },
+              ),
           ],
         ),
       ),
     );
-  }
-
-  Widget _body() {
-    if (AuthService.isPengawas()) {
-      // Menu untuk Pengawas
-      switch (_index) {
-        case 0:
-          return const StatusTab();
-        case 1:
-          return const ScannerTab(isPengawas: true);
-        case 2:
-          return const CRUDLogPage();
-        default:
-          return const StatusTab();
-      }
-    } else {
-      // Menu untuk Security (hanya Status & Scan)
-      switch (_index) {
-        case 0:
-          return const StatusTab();
-        case 1:
-          return const ScannerTab(isPengawas: false);
-        default:
-          return const StatusTab();
-      }
-    }
-  }
-
-  List<NavigationDestination> _buildNavigationDestinations() {
-    final isPengawas = AuthService.isPengawas();
-
-    if (isPengawas) {
-      // Navigation untuk Pengawas (3 menu: Status, Scan, Data)
-      return [
-        NavigationDestination(
-          icon: Icon(
-            Icons.list_alt,
-            color: _index == 0 ? Colors.green.shade600 : Colors.grey.shade500,
-          ),
-          label: 'Status',
-        ),
-        NavigationDestination(
-          icon: Icon(
-            Icons.badge,
-            color: _index == 1 ? Colors.green.shade600 : Colors.grey.shade500,
-          ),
-          label: 'Scan',
-        ),
-        NavigationDestination(
-          icon: Icon(
-            Icons.edit_note,
-            color: _index == 2 ? Colors.green.shade600 : Colors.grey.shade500,
-          ),
-          label: 'Data',
-        ),
-      ];
-    } else {
-      // Navigation untuk Security (2 menu: Status, Scan)
-      return [
-        NavigationDestination(
-          icon: Icon(
-            Icons.list_alt,
-            color: _index == 0 ? Colors.green.shade600 : Colors.grey.shade500,
-          ),
-          label: 'Status',
-        ),
-        NavigationDestination(
-          icon: Icon(
-            Icons.security,
-            color: _index == 1 ? Colors.green.shade600 : Colors.grey.shade500,
-          ),
-          label: 'Scan',
-        ),
-      ];
-    }
   }
 
   @override
@@ -320,7 +286,7 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
         child: Column(
           children: [
             _buildHeader(),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -332,21 +298,21 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
       ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withAlpha(30),
-              blurRadius: 12,
-              offset: const Offset(0, -4),
+              color: Colors.black.withAlpha(15),
+              blurRadius: 10,
+              offset: const Offset(0, -3),
             ),
           ],
         ),
         child: NavigationBar(
           selectedIndex: _index,
           onDestinationSelected: (i) => setState(() => _index = i),
-          backgroundColor: Colors.white,
+          backgroundColor: AppColors.surface,
           surfaceTintColor: Colors.transparent,
-          destinations: _buildNavigationDestinations(),
+          destinations: _buildDestinations(),
         ),
       ),
     );

@@ -17,10 +17,16 @@ import 'system_tray_manager.dart';
 import 'ui.dart';
 import 'user_management.dart';
 
+const bool kForceLiveRemoteServer = bool.fromEnvironment(
+  'FORCE_LIVE_REMOTE_SERVER',
+  defaultValue: true,
+);
+const String kLiveApiBaseUrl = 'https://veriv.tunasestaindonesia.com';
+
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  final isClientMode = args.contains('--client-mode');
+  final isClientMode = kForceLiveRemoteServer || args.contains('--client-mode');
   final apiBaseUrl = _resolveApiBaseUrl(args);
 
   if (isClientMode) {
@@ -68,6 +74,10 @@ void main(List<String> args) async {
 }
 
 String _resolveApiBaseUrl(List<String> args) {
+  if (kForceLiveRemoteServer) {
+    return kLiveApiBaseUrl;
+  }
+
   for (final arg in args) {
     if (arg.startsWith('--api-url=')) {
       final value = arg.substring('--api-url='.length).trim();
@@ -82,7 +92,7 @@ String _resolveApiBaseUrl(List<String> args) {
     return envUrl;
   }
 
-  return 'http://localhost:8080';
+  return kLiveApiBaseUrl;
 }
 
 // Helper to run future without awaiting

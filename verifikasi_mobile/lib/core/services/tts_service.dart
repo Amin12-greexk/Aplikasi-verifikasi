@@ -9,7 +9,7 @@ class TtsService {
     if (_isInitialized) return;
 
     await _flutterTts.setLanguage("id-ID");
-    await _flutterTts.setSpeechRate(0.5); // Slightly slower for clarity
+    await _flutterTts.setSpeechRate(0.5);
     await _flutterTts.setVolume(1.0);
     await _flutterTts.setPitch(1.0);
 
@@ -24,7 +24,7 @@ class TtsService {
   // Speak the given text
   static Future<void> speak(String text) async {
     await initialize();
-    await stop(); // Stop any ongoing speech first
+    await stop();
     await _flutterTts.speak(text);
   }
 
