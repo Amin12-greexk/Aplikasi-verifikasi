@@ -17,6 +17,10 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static const Duration _dashboardCacheTtl = Duration(seconds: 30);
+  static const int _maxPinsToCheck = 5;
+  static _DashboardCache? _dashboardCache;
+
   int _totalLogs = 0;
   int _approved = 0;
   int _pending = 0;
@@ -26,30 +30,101 @@ class _HomePageState extends State<HomePage> {
   int _attendanceTodayCount = 0;
   DateTime? _attendanceCheckedAt;
   bool _isLoading = true;
+  bool _isAttendanceLoading = true;
+  int _activeLoadId = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadDashboard();
+    final restored = _restoreFromCache();
+    _loadDashboard(showLoader: !restored);
   }
 
-  Future<void> _loadDashboard() async {
-    setState(() => _isLoading = true);
-    List<Map<String, dynamic>> logs = [];
-    List<Map<String, dynamic>> offline = [];
-    bool attendanceConnected = false;
+  bool _restoreFromCache() {
+    final cache = _dashboardCache;
+    if (cache == null) return false;
+    if (DateTime.now().difference(cache.fetchedAt) > _dashboardCacheTtl) {
+      return false;
+    }
 
-    try {
-      logs = await VerificationService.fetchLogs();
-    } catch (_) {}
+    _totalLogs = cache.totalLogs;
+    _approved = cache.approved;
+    _pending = cache.pending;
+    _offlineCount = cache.offlineCount;
+    _attendanceConnected = cache.attendanceConnected;
+    _attendancePinsChecked = cache.attendancePinsChecked;
+    _attendanceTodayCount = cache.attendanceTodayCount;
+    _attendanceCheckedAt = cache.attendanceCheckedAt;
+    _isLoading = false;
+    _isAttendanceLoading = false;
+    return true;
+  }
 
-    try {
-      offline = await OfflineQueueManager.getPending();
-    } catch (_) {}
+  void _saveCache() {
+    _dashboardCache = _DashboardCache(
+      totalLogs: _totalLogs,
+      approved: _approved,
+      pending: _pending,
+      offlineCount: _offlineCount,
+      attendanceConnected: _attendanceConnected,
+      attendancePinsChecked: _attendancePinsChecked,
+      attendanceTodayCount: _attendanceTodayCount,
+      attendanceCheckedAt: _attendanceCheckedAt,
+      fetchedAt: DateTime.now(),
+    );
+  }
 
+  Future<List<Map<String, dynamic>>> _safeFetchLogs() async {
     try {
-      attendanceConnected = await AttendanceService.isAvailable();
-    } catch (_) {}
+      return await VerificationService.fetchLogs().timeout(
+        const Duration(seconds: 8),
+      );
+    } catch (_) {
+      return <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _safeGetPendingQueue() async {
+    try {
+      return await OfflineQueueManager.getPending().timeout(
+        const Duration(seconds: 2),
+      );
+    } catch (_) {
+      return <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<bool> _safeCheckAttendanceApi() async {
+    try {
+      return await AttendanceService.isAvailable().timeout(
+        const Duration(seconds: 3),
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _loadDashboard({bool showLoader = true}) async {
+    final loadId = ++_activeLoadId;
+
+    if (showLoader && mounted) {
+      setState(() {
+        _isLoading = true;
+        _isAttendanceLoading = true;
+      });
+    }
+
+    final results = await Future.wait<dynamic>([
+      _safeFetchLogs(),
+      _safeGetPendingQueue(),
+      _safeCheckAttendanceApi(),
+    ]);
+
+    if (!mounted || loadId != _activeLoadId) return;
+
+    final logs = List<Map<String, dynamic>>.from(results[0] as List);
+    final offline = List<Map<String, dynamic>>.from(results[1] as List);
+    final attendanceConnected = results[2] as bool;
 
     final pins = logs
         .map((l) => _extractPinFromId(l['id_karyawan']?.toString() ?? ''))
@@ -57,28 +132,9 @@ class _HomePageState extends State<HomePage> {
         .toSet()
         .toList();
     final pinsToCheck = attendanceConnected
-        ? pins.take(15).toList()
+        ? pins.take(_maxPinsToCheck).toList()
         : <String>[];
-
-    int attendanceTodayCount = 0;
-    if (pinsToCheck.isNotEmpty) {
-      final now = DateTime.now();
-      final hasTodayAttendance = await Future.wait(
-        pinsToCheck.map((pin) async {
-          try {
-            final summary = await AttendanceService.getTodayStatusByPin(
-              pin,
-            ).timeout(const Duration(seconds: 5));
-            final latestRaw = summary?['latest_scan_date']?.toString();
-            final latest = _parseDateTime(latestRaw);
-            return latest != null && _isSameDay(latest, now);
-          } catch (_) {
-            return false;
-          }
-        }),
-      );
-      attendanceTodayCount = hasTodayAttendance.where((v) => v).length;
-    }
+    final shouldLoadAttendance = attendanceConnected && pinsToCheck.isNotEmpty;
 
     if (mounted) {
       setState(() {
@@ -94,11 +150,49 @@ class _HomePageState extends State<HomePage> {
         _offlineCount = offline.length;
         _attendanceConnected = attendanceConnected;
         _attendancePinsChecked = pinsToCheck.length;
-        _attendanceTodayCount = attendanceTodayCount;
-        _attendanceCheckedAt = DateTime.now();
+        if (!shouldLoadAttendance) {
+          _attendanceTodayCount = 0;
+          _attendanceCheckedAt = DateTime.now();
+        }
         _isLoading = false;
+        _isAttendanceLoading = shouldLoadAttendance;
       });
+      _saveCache();
     }
+
+    if (shouldLoadAttendance) {
+      _loadAttendanceSummary(loadId: loadId, pinsToCheck: pinsToCheck);
+    }
+  }
+
+  Future<void> _loadAttendanceSummary({
+    required int loadId,
+    required List<String> pinsToCheck,
+  }) async {
+    final now = DateTime.now();
+    final hasTodayAttendance = await Future.wait(
+      pinsToCheck.map((pin) async {
+        try {
+          final summary = await AttendanceService.getTodayStatusByPin(
+            pin,
+          ).timeout(const Duration(seconds: 4));
+          final latestRaw = summary?['latest_scan_date']?.toString();
+          final latest = _parseDateTime(latestRaw);
+          return latest != null && _isSameDay(latest, now);
+        } catch (_) {
+          return false;
+        }
+      }),
+    );
+
+    if (!mounted || loadId != _activeLoadId) return;
+
+    setState(() {
+      _attendanceTodayCount = hasTodayAttendance.where((v) => v).length;
+      _attendanceCheckedAt = DateTime.now();
+      _isAttendanceLoading = false;
+    });
+    _saveCache();
   }
 
   String _extractPinFromId(String rawId) {
@@ -145,14 +239,14 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final isPengawas = AuthService.isPengawas();
     final userName = AuthService.username ?? 'User';
-    final attendanceStatusLabel = _isLoading
+    final attendanceStatusLabel = _isAttendanceLoading
         ? 'Memuat'
         : (_attendanceConnected ? 'Online' : 'Offline');
-    final attendanceStatusColor = _isLoading
+    final attendanceStatusColor = _isAttendanceLoading
         ? AppColors.info
         : (_attendanceConnected ? AppColors.success : AppColors.warning);
-    final attendanceSubtitle = _isLoading
-        ? 'Menghubungkan ke server absensi...'
+    final attendanceSubtitle = _isAttendanceLoading
+        ? 'Mengecek absensi hari ini...'
         : !_attendanceConnected
         ? 'Server absensi belum dapat diakses.'
         : _attendancePinsChecked == 0
@@ -507,4 +601,28 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+}
+
+class _DashboardCache {
+  final int totalLogs;
+  final int approved;
+  final int pending;
+  final int offlineCount;
+  final bool attendanceConnected;
+  final int attendancePinsChecked;
+  final int attendanceTodayCount;
+  final DateTime? attendanceCheckedAt;
+  final DateTime fetchedAt;
+
+  const _DashboardCache({
+    required this.totalLogs,
+    required this.approved,
+    required this.pending,
+    required this.offlineCount,
+    required this.attendanceConnected,
+    required this.attendancePinsChecked,
+    required this.attendanceTodayCount,
+    required this.attendanceCheckedAt,
+    required this.fetchedAt,
+  });
 }

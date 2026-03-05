@@ -54,6 +54,7 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
   late int _index;
   late AnimationController _headerAnimationController;
+  late final List<Widget> _tabs;
 
   bool get _isPengawas => AuthService.isPengawas();
 
@@ -62,6 +63,15 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _index = 1;
+    _tabs = _isPengawas
+        ? const [
+            HomePage(),
+            VerificationTab(),
+            AttendancePage(),
+            HistoryPage(),
+            MorePage(),
+          ]
+        : const [HomePage(), VerificationTab(), HistoryPage(), MorePage()];
     _headerAnimationController = AnimationController(
       duration: const Duration(milliseconds: 600),
       vsync: this,
@@ -106,37 +116,7 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
 
   /// Build the appropriate body based on current tab index and role.
   Widget _body() {
-    if (_isPengawas) {
-      // Pengawas: 5 tabs [Beranda, Verifikasi, Absensi, Riwayat, Lainnya]
-      switch (_index) {
-        case 0:
-          return const HomePage();
-        case 1:
-          return const VerificationTab();
-        case 2:
-          return const AttendancePage();
-        case 3:
-          return const HistoryPage();
-        case 4:
-          return const MorePage();
-        default:
-          return const VerificationTab();
-      }
-    } else {
-      // Security: 4 tabs [Beranda, Verifikasi, Riwayat, Lainnya]
-      switch (_index) {
-        case 0:
-          return const HomePage();
-        case 1:
-          return const VerificationTab();
-        case 2:
-          return const HistoryPage();
-        case 3:
-          return const MorePage();
-        default:
-          return const VerificationTab();
-      }
-    }
+    return IndexedStack(index: _index, children: _tabs);
   }
 
   List<NavigationDestination> _buildDestinations() {
