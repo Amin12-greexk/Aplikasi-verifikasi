@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/services/daily_refresh_manager.dart';
 import '../../core/theme/app_colors.dart';
 import 'verification_service.dart';
 
@@ -75,6 +76,17 @@ class _StatusTabState extends State<StatusTab> {
     });
 
     try {
+      // Check for daily refresh
+      final shouldRefresh = await DailyRefreshManager.shouldRefreshDaily();
+      if (shouldRefresh) {
+        try {
+          await VerificationService.dailyReset();
+          await DailyRefreshManager.markAsRefreshed();
+        } catch (e) {
+          print('[Status] Daily reset failed: $e');
+        }
+      }
+
       final logs = await VerificationService.fetchLogs();
       if (mounted) {
         setState(() {
