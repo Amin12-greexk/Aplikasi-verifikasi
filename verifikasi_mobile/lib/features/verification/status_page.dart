@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../core/services/daily_refresh_manager.dart';
 import '../../core/theme/app_colors.dart';
 import 'verification_service.dart';
 
@@ -76,17 +75,6 @@ class _StatusTabState extends State<StatusTab> {
     });
 
     try {
-      // Check for daily refresh
-      final shouldRefresh = await DailyRefreshManager.shouldRefreshDaily();
-      if (shouldRefresh) {
-        try {
-          await VerificationService.dailyReset();
-          await DailyRefreshManager.markAsRefreshed();
-        } catch (e) {
-          print('[Status] Daily reset failed: $e');
-        }
-      }
-
       final logs = await VerificationService.fetchLogs();
       if (mounted) {
         setState(() {
@@ -105,7 +93,8 @@ class _StatusTabState extends State<StatusTab> {
   }
 
   Color _statusColor(String pengawas, String security) {
-    if (pengawas == 'approved' && security == 'approved') return AppColors.success;
+    if (pengawas == 'approved' && security == 'approved')
+      return AppColors.success;
     if (pengawas == 'approved') return AppColors.info;
     return AppColors.warning;
   }
@@ -137,12 +126,18 @@ class _StatusTabState extends State<StatusTab> {
             const SizedBox(height: 12),
             Text(
               'Gagal memuat data',
-              style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
               _error!,
-              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
@@ -156,10 +151,20 @@ class _StatusTabState extends State<StatusTab> {
       );
     }
 
-    final approved = _logs.where((l) =>
-        l['status_pengawas'] == 'approved' && l['status_security'] == 'approved').length;
-    final waitingSecurity = _logs.where((l) =>
-        l['status_pengawas'] == 'approved' && l['status_security'] != 'approved').length;
+    final approved = _logs
+        .where(
+          (l) =>
+              l['status_pengawas'] == 'approved' &&
+              l['status_security'] == 'approved',
+        )
+        .length;
+    final waitingSecurity = _logs
+        .where(
+          (l) =>
+              l['status_pengawas'] == 'approved' &&
+              l['status_security'] != 'approved',
+        )
+        .length;
     final pending = _logs.length - approved - waitingSecurity;
 
     return RefreshIndicator(
@@ -199,8 +204,12 @@ class _StatusTabState extends State<StatusTab> {
               final info = _extractEmployeeInfo(idKaryawan);
               final scanP = log['scanned_by_pengawas'] ?? '-';
               final scanS = log['scanned_by_security'] ?? '-';
-              final timeP = _formatTimeLabel(log['scan_time_pengawas']?.toString());
-              final timeS = _formatTimeLabel(log['scan_time_security']?.toString());
+              final timeP = _formatTimeLabel(
+                log['scan_time_pengawas']?.toString(),
+              );
+              final timeS = _formatTimeLabel(
+                log['scan_time_security']?.toString(),
+              );
 
               return Container(
                 margin: const EdgeInsets.only(bottom: 8),
@@ -225,7 +234,10 @@ class _StatusTabState extends State<StatusTab> {
                             ),
                           ),
                         ),
-                        _chip(_statusLabel(statusP, statusS), _statusColor(statusP, statusS)),
+                        _chip(
+                          _statusLabel(statusP, statusS),
+                          _statusColor(statusP, statusS),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 10),
@@ -233,16 +245,24 @@ class _StatusTabState extends State<StatusTab> {
                       label: 'Pengawas',
                       by: scanP,
                       time: timeP,
-                      color: statusP == 'approved' ? AppColors.success : AppColors.textHint,
-                      icon: statusP == 'approved' ? Icons.check_circle : Icons.pending,
+                      color: statusP == 'approved'
+                          ? AppColors.success
+                          : AppColors.textHint,
+                      icon: statusP == 'approved'
+                          ? Icons.check_circle
+                          : Icons.pending,
                     ),
                     const SizedBox(height: 4),
                     _scanInfoRow(
                       label: 'Security',
                       by: scanS,
                       time: timeS,
-                      color: statusS == 'approved' ? AppColors.success : AppColors.textHint,
-                      icon: statusS == 'approved' ? Icons.check_circle : Icons.pending,
+                      color: statusS == 'approved'
+                          ? AppColors.success
+                          : AppColors.textHint,
+                      icon: statusS == 'approved'
+                          ? Icons.check_circle
+                          : Icons.pending,
                     ),
                   ],
                 ),
@@ -270,12 +290,20 @@ Widget _scanInfoRow({
       const SizedBox(width: 6),
       Text(
         '$label: ',
-        style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
+        style: TextStyle(
+          fontSize: 11,
+          color: AppColors.textSecondary,
+          fontWeight: FontWeight.w500,
+        ),
       ),
       Expanded(
         child: Text(
           by == '-' ? 'Belum scan' : '$by ($time)',
-          style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w500),
+          style: TextStyle(
+            fontSize: 11,
+            color: color,
+            fontWeight: FontWeight.w500,
+          ),
         ),
       ),
     ],
@@ -289,7 +317,10 @@ Widget _chip(String text, Color color) {
       color: color.withAlpha(20),
       borderRadius: BorderRadius.circular(6),
     ),
-    child: Text(text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: color)),
+    child: Text(
+      text,
+      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: color),
+    ),
   );
 }
 
@@ -311,7 +342,9 @@ class _StatRow extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(child: _statCard('Selesai', '$approved', AppColors.success)),
         const SizedBox(width: 8),
-        Expanded(child: _statCard('Menunggu', '$waitingSecurity', AppColors.warning)),
+        Expanded(
+          child: _statCard('Menunggu', '$waitingSecurity', AppColors.warning),
+        ),
         const SizedBox(width: 8),
         Expanded(child: _statCard('Pending', '$pending', AppColors.textHint)),
       ],
@@ -330,12 +363,20 @@ class _StatRow extends StatelessWidget {
         children: [
           Text(
             value,
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: bg),
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: bg,
+            ),
           ),
           const SizedBox(height: 2),
           Text(
             title,
-            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: bg),
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+              color: bg,
+            ),
           ),
         ],
       ),
