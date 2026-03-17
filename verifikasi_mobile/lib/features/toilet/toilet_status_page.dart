@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/wib_time.dart';
 import 'toilet_permit_service.dart';
 
 class ToiletStatusTab extends StatefulWidget {
@@ -15,9 +16,11 @@ class ToiletStatusTab extends StatefulWidget {
 class _ToiletStatusTabState extends State<ToiletStatusTab> {
   List<Map<String, dynamic>> _permits = [];
   bool _isLoading = true;
+  bool _isRefreshing = false;
   String? _error;
   Timer? _ticker;
-  DateTime _now = DateTime.now();
+  Timer? _refreshTimer;
+  DateTime _now = DateTime.now().toUtc();
 
   @override
   void initState() {
@@ -25,21 +28,31 @@ class _ToiletStatusTabState extends State<ToiletStatusTab> {
     _loadPermits();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      setState(() => _now = DateTime.now());
+      setState(() => _now = DateTime.now().toUtc());
+    });
+    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (!mounted) return;
+      _loadPermits(showLoading: false);
     });
   }
 
   @override
   void dispose() {
     _ticker?.cancel();
+    _refreshTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _loadPermits() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+  Future<void> _loadPermits({bool showLoading = true}) async {
+    if (_isRefreshing) return;
+    _isRefreshing = true;
+
+    if (showLoading) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    }
 
     try {
       final permits = await ToiletPermitService.fetchActivePermits();
@@ -50,10 +63,14 @@ class _ToiletStatusTabState extends State<ToiletStatusTab> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _isLoading = false;
-      });
+      if (showLoading || _permits.isEmpty) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+      }
+    } finally {
+      _isRefreshing = false;
     }
   }
 
@@ -83,14 +100,8 @@ class _ToiletStatusTabState extends State<ToiletStatusTab> {
     return '';
   }
 
-  String _formatTimeLabel(String? raw) {
-    final parsed = ToiletPermitService.parseDateTime(raw);
-    if (parsed == null) return '-';
-
-    final local = parsed.toLocal();
-    final h = local.hour.toString().padLeft(2, '0');
-    final m = local.minute.toString().padLeft(2, '0');
-    return '$h:$m';
+  String _formatTimeLabel(String? raw, {bool withSeconds = false}) {
+    return WibTime.formatTime(raw, withSeconds: withSeconds);
   }
 
   Color _statusColor(Map<String, dynamic> permit) {
@@ -105,16 +116,30 @@ class _ToiletStatusTabState extends State<ToiletStatusTab> {
 
   String _statusLabel(Map<String, dynamic> permit) {
     if (ToiletPermitService.isExpiredPermit(permit, now: _now)) {
-      return 'Waktu Habis';
+      return 'Sudah Habis';
     }
     if (ToiletPermitService.isProofScanned(permit)) {
-      return 'Tervalidasi Security';
+      return 'Sudah Diverifikasi Security';
     }
-    return 'Menunggu Proof Scan';
+    return 'Masih Aktif';
   }
 
   int _remainingSeconds(Map<String, dynamic> permit) {
     return ToiletPermitService.remainingSecondsForPermit(permit, now: _now);
+  }
+
+  String _statusDescription(Map<String, dynamic> permit) {
+    final remaining = _remainingSeconds(permit);
+    if (ToiletPermitService.isExpiredPermit(permit, now: _now)) {
+      return 'Izin toilet sudah melewati batas waktu kembali.';
+    }
+    if (ToiletPermitService.isProofScanned(permit)) {
+      final proofBy = permit['proof_scanned_by']?.toString().trim();
+      return proofBy == null || proofBy.isEmpty
+          ? 'Izin ini sudah dicatat oleh security.'
+          : 'Izin ini sudah dicatat oleh security: $proofBy.';
+    }
+    return 'Masih menunggu proof scan security. Sisa waktu ${ToiletPermitService.formatRemainingDetailedLabel(remaining)}.';
   }
 
   @override
@@ -213,13 +238,19 @@ class _ToiletStatusTabState extends State<ToiletStatusTab> {
               final remaining = _remainingSeconds(permit);
               final approvedAt = _formatTimeLabel(
                 permit['approved_at']?.toString(),
+                withSeconds: true,
               );
               final expiresAt = _formatTimeLabel(
                 permit['expires_at']?.toString(),
+                withSeconds: true,
               );
               final proofAt = _formatTimeLabel(
                 permit['proof_scanned_at']?.toString(),
+                withSeconds: true,
               );
+              final proofScanned = ToiletPermitService.isProofScanned(permit);
+              final approvedBy = permit['approved_by']?.toString().trim();
+              final proofBy = permit['proof_scanned_by']?.toString().trim();
 
               return Container(
                 margin: const EdgeInsets.only(bottom: 10),
@@ -247,52 +278,87 @@ class _ToiletStatusTabState extends State<ToiletStatusTab> {
                         _chip(label, color),
                       ],
                     ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Icon(Icons.timer, size: 16, color: color),
-                        const SizedBox(width: 6),
-                        Text(
-                          ToiletPermitService.formatRemainingLabel(remaining),
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: color,
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: color.withAlpha(16),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: color.withAlpha(40)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            proofScanned
+                                ? 'Status Saat Ini'
+                                : 'Sisa Waktu Real-Time',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textSecondary,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          '${permit['duration_minutes']} menit',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textSecondary,
+                          const SizedBox(height: 4),
+                          Text(
+                            proofScanned
+                                ? 'Sudah diverifikasi security'
+                                : ToiletPermitService.formatRemainingDetailedLabel(
+                                    remaining,
+                                  ),
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800,
+                              color: color,
+                            ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 6),
+                          Text(
+                            _statusDescription(permit),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    _infoRow(
-                      icon: Icons.badge,
-                      label: 'Pengawas',
-                      value:
-                          '${permit['approved_by'] ?? '-'} (${approvedAt == '-' ? expiresAt : approvedAt})',
+                    const SizedBox(height: 10),
+                    _detailItem(
+                      icon: Icons.person_pin_circle,
+                      label: 'Disetujui Pengawas',
+                      value: approvedBy == null || approvedBy.isEmpty
+                          ? 'Nama pengawas belum tercatat'
+                          : approvedBy,
                       color: AppColors.pengawas,
                     ),
-                    const SizedBox(height: 4),
-                    _infoRow(
+                    const SizedBox(height: 8),
+                    _detailItem(
+                      icon: Icons.schedule_send,
+                      label: 'Jam Disetujui',
+                      value: approvedAt == '-'
+                          ? 'Belum ada jam persetujuan'
+                          : approvedAt,
+                      color: AppColors.info,
+                    ),
+                    const SizedBox(height: 8),
+                    _detailItem(
                       icon: Icons.schedule,
-                      label: 'Batas',
-                      value: expiresAt == '-' ? 'Tidak diketahui' : expiresAt,
+                      label: 'Batas Kembali',
+                      value: expiresAt == '-'
+                          ? 'Batas waktu belum tersedia'
+                          : expiresAt,
                       color: AppColors.warning,
                     ),
-                    const SizedBox(height: 4),
-                    _infoRow(
+                    const SizedBox(height: 8),
+                    _detailItem(
                       icon: Icons.security,
-                      label: 'Security',
-                      value: ToiletPermitService.isProofScanned(permit)
-                          ? '${permit['proof_scanned_by'] ?? '-'} ($proofAt)'
-                          : 'Belum proof scan',
-                      color: ToiletPermitService.isProofScanned(permit)
+                      label: 'Status Security',
+                      value: proofScanned
+                          ? '${proofBy == null || proofBy.isEmpty ? 'Security' : proofBy} pada $proofAt'
+                          : 'Belum ada proof scan dari security',
+                      color: proofScanned
                           ? AppColors.success
                           : AppColors.textHint,
                     ),
@@ -306,35 +372,51 @@ class _ToiletStatusTabState extends State<ToiletStatusTab> {
   }
 }
 
-Widget _infoRow({
+Widget _detailItem({
   required IconData icon,
   required String label,
   required String value,
   required Color color,
 }) {
-  return Row(
-    children: [
-      Icon(icon, size: 14, color: color),
-      const SizedBox(width: 6),
-      Text(
-        '$label: ',
-        style: const TextStyle(
-          fontSize: 11,
-          color: AppColors.textSecondary,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-      Expanded(
-        child: Text(
-          value,
-          style: TextStyle(
-            fontSize: 11,
-            color: color,
-            fontWeight: FontWeight.w500,
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: color.withAlpha(12),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: color.withAlpha(30)),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: color,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
           ),
         ),
-      ),
-    ],
+      ],
+    ),
   );
 }
 

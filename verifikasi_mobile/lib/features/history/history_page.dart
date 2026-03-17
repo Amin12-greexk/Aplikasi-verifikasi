@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/wib_time.dart';
 import 'history_service.dart';
 
 /// Riwayat tab with date filter, module filter, and status filter.
@@ -119,14 +120,8 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   String _formatTimeLabel(String? raw) {
-    if (raw == null || raw.isEmpty || raw == '-') return '-';
-    try {
-      if (raw.contains('T')) {
-        final dt = DateTime.parse(raw).toLocal();
-        return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-      }
-    } catch (_) {}
-    return raw;
+    final formatted = WibTime.formatTime(raw);
+    return formatted == '-' ? (raw ?? '-') : formatted;
   }
 
   @override

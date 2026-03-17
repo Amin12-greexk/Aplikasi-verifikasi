@@ -58,17 +58,15 @@ class ServerDashboard extends StatefulWidget {
 
 class _ServerDashboardState extends State<ServerDashboard> {
   late PageController _pageController;
-  DateTime? _selectedStartDate;
-  DateTime? _selectedEndDate;
 
   String _formatTime(String? raw) {
     if (raw == null || raw.isEmpty) return '-';
     final normalized = raw.contains('T') ? raw : raw.replaceFirst(' ', 'T');
     final dt = DateTime.tryParse(normalized);
     if (dt == null) return '-';
-    final local = dt.toLocal();
-    final hh = local.hour.toString().padLeft(2, '0');
-    final mm = local.minute.toString().padLeft(2, '0');
+    final wib = dt.toUtc().add(const Duration(hours: 7));
+    final hh = wib.hour.toString().padLeft(2, '0');
+    final mm = wib.minute.toString().padLeft(2, '0');
     return '$hh:$mm';
   }
 
@@ -146,7 +144,10 @@ class _ServerDashboardState extends State<ServerDashboard> {
               child: Tooltip(
                 message: 'Export Data',
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(8),
@@ -205,7 +206,11 @@ class _ServerDashboardState extends State<ServerDashboard> {
         .where((log) => log['status_security'] == 'ACC')
         .length;
     final pendingSecurity = widget.logs
-        .where((log) => log['status_pengawas'] == 'ACC' && log['status_security'] != 'ACC')
+        .where(
+          (log) =>
+              log['status_pengawas'] == 'ACC' &&
+              log['status_security'] != 'ACC',
+        )
         .length;
 
     return GridView.count(
@@ -276,10 +281,7 @@ class _ServerDashboardState extends State<ServerDashboard> {
             const SizedBox(height: 8),
             Text(
               title,
-              style: const TextStyle(
-                fontSize: 12,
-                color: Colors.white70,
-              ),
+              style: const TextStyle(fontSize: 12, color: Colors.white70),
             ),
           ],
         ),
@@ -294,9 +296,9 @@ class _ServerDashboardState extends State<ServerDashboard> {
         Text(
           'Verification Logs',
           style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                color: Colors.green.shade700,
-                fontWeight: FontWeight.bold,
-              ),
+            color: Colors.green.shade700,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         const SizedBox(height: 12),
         if (widget.logs.isEmpty)
@@ -372,42 +374,44 @@ class _ServerDashboardState extends State<ServerDashboard> {
                   ),
                 ],
                 rows: widget.logs
-                    .map((log) => DataRow(
-                          color: WidgetStateProperty.all(
-                            (widget.logs.indexOf(log) % 2 == 0)
-                                ? Colors.white
-                                : Colors.green.shade50,
+                    .map(
+                      (log) => DataRow(
+                        color: WidgetStateProperty.all(
+                          (widget.logs.indexOf(log) % 2 == 0)
+                              ? Colors.white
+                              : Colors.green.shade50,
+                        ),
+                        cells: [
+                          DataCell(Text(log['id_karyawan']?.toString() ?? '')),
+                          DataCell(
+                            _buildStatusBadge(
+                              log['status_pengawas']?.toString() ?? 'PENDING',
+                            ),
                           ),
-                          cells: [
-                            DataCell(
-                              Text(log['id_karyawan']?.toString() ?? ''),
+                          DataCell(
+                            _buildStatusBadge(
+                              log['status_security']?.toString() ?? 'PENDING',
                             ),
-                            DataCell(
-                              _buildStatusBadge(
-                                log['status_pengawas']?.toString() ?? 'PENDING',
+                          ),
+                          DataCell(
+                            Text(
+                              _formatTime(
+                                log['pengawas_scanned_at']?.toString() ??
+                                    log['created_at']?.toString(),
                               ),
                             ),
-                            DataCell(
-                              _buildStatusBadge(
-                                log['status_security']?.toString() ?? 'PENDING',
+                          ),
+                          DataCell(
+                            Text(
+                              _formatTime(
+                                log['security_scanned_at']?.toString() ??
+                                    log['created_at']?.toString(),
                               ),
                             ),
-                            DataCell(
-                              Text(
-                                _formatTime(
-                                  log['pengawas_scanned_at']?.toString() ?? log['created_at']?.toString(),
-                                ),
-                              ),
-                            ),
-                            DataCell(
-                              Text(
-                                _formatTime(
-                                  log['security_scanned_at']?.toString() ?? log['created_at']?.toString(),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ))
+                          ),
+                        ],
+                      ),
+                    )
                     .toList(),
               ),
             ),
@@ -419,7 +423,9 @@ class _ServerDashboardState extends State<ServerDashboard> {
   Widget _buildStatusBadge(String status) {
     final isApproved = status == 'ACC';
     final color = isApproved ? Colors.green : Colors.orange;
-    final textColor = isApproved ? Colors.green.shade900 : Colors.orange.shade900;
+    final textColor = isApproved
+        ? Colors.green.shade900
+        : Colors.orange.shade900;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -550,10 +556,7 @@ class _ServerDashboardState extends State<ServerDashboard> {
 class ExportDateRangeDialog extends StatefulWidget {
   final Function(DateTime?, DateTime?) onExport;
 
-  const ExportDateRangeDialog({
-    required this.onExport,
-    super.key,
-  });
+  const ExportDateRangeDialog({required this.onExport, super.key});
 
   @override
   State<ExportDateRangeDialog> createState() => _ExportDateRangeDialogState();
@@ -592,11 +595,21 @@ class _ExportDateRangeDialogState extends State<ExportDateRangeDialog> {
                 title: Text(
                   _startDate == null
                       ? 'Belum dipilih'
-                      : 'dd/MM/yyyy'.replaceAll('dd', '${_startDate!.day.toString().padLeft(2, '0')}')
-                          .replaceAll('MM', '${_startDate!.month.toString().padLeft(2, '0')}')
-                          .replaceAll('yyyy', '${_startDate!.year}'),
+                      : 'dd/MM/yyyy'
+                            .replaceAll(
+                              'dd',
+                              _startDate!.day.toString().padLeft(2, '0'),
+                            )
+                            .replaceAll(
+                              'MM',
+                              _startDate!.month.toString().padLeft(2, '0'),
+                            )
+                            .replaceAll('yyyy', _startDate!.year.toString()),
                 ),
-                trailing: Icon(Icons.calendar_today, color: Colors.green.shade600),
+                trailing: Icon(
+                  Icons.calendar_today,
+                  color: Colors.green.shade600,
+                ),
                 onTap: () async {
                   final picked = await showDatePicker(
                     context: context,
@@ -626,11 +639,21 @@ class _ExportDateRangeDialogState extends State<ExportDateRangeDialog> {
                 title: Text(
                   _endDate == null
                       ? 'Belum dipilih'
-                      : 'dd/MM/yyyy'.replaceAll('dd', '${_endDate!.day.toString().padLeft(2, '0')}')
-                          .replaceAll('MM', '${_endDate!.month.toString().padLeft(2, '0')}')
-                          .replaceAll('yyyy', '${_endDate!.year}'),
+                      : 'dd/MM/yyyy'
+                            .replaceAll(
+                              'dd',
+                              _endDate!.day.toString().padLeft(2, '0'),
+                            )
+                            .replaceAll(
+                              'MM',
+                              _endDate!.month.toString().padLeft(2, '0'),
+                            )
+                            .replaceAll('yyyy', _endDate!.year.toString()),
                 ),
-                trailing: Icon(Icons.calendar_today, color: Colors.green.shade600),
+                trailing: Icon(
+                  Icons.calendar_today,
+                  color: Colors.green.shade600,
+                ),
                 onTap: () async {
                   final picked = await showDatePicker(
                     context: context,
@@ -645,7 +668,9 @@ class _ExportDateRangeDialogState extends State<ExportDateRangeDialog> {
               ),
             ),
             const SizedBox(height: 8),
-            if (_startDate != null && _endDate != null && _startDate!.isAfter(_endDate!))
+            if (_startDate != null &&
+                _endDate != null &&
+                _startDate!.isAfter(_endDate!))
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
@@ -654,10 +679,7 @@ class _ExportDateRangeDialogState extends State<ExportDateRangeDialog> {
                 ),
                 child: Text(
                   'Tanggal mulai tidak boleh lebih besar dari tanggal akhir',
-                  style: TextStyle(
-                    color: Colors.orange.shade900,
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: Colors.orange.shade900, fontSize: 12),
                 ),
               ),
           ],
@@ -670,10 +692,14 @@ class _ExportDateRangeDialogState extends State<ExportDateRangeDialog> {
         ),
         ElevatedButton(
           onPressed: () {
-            if (_startDate != null && _endDate != null && _startDate!.isAfter(_endDate!)) {
+            if (_startDate != null &&
+                _endDate != null &&
+                _startDate!.isAfter(_endDate!)) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Tanggal mulai tidak boleh lebih besar dari tanggal akhir'),
+                  content: Text(
+                    'Tanggal mulai tidak boleh lebih besar dari tanggal akhir',
+                  ),
                   backgroundColor: Colors.red,
                 ),
               );

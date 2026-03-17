@@ -1,5 +1,6 @@
 import '../../core/network/base_api_client.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/utils/wib_time.dart';
 
 /// API client for toilet permit approval, timer, and proof scan flows.
 class ToiletPermitService {
@@ -9,16 +10,7 @@ class ToiletPermitService {
   static const String proofScanned = 'scanned';
 
   static DateTime? parseDateTime(String? raw) {
-    if (raw == null || raw.trim().isEmpty) return null;
-    try {
-      return DateTime.parse(raw);
-    } catch (_) {
-      try {
-        return DateTime.parse(raw.replaceFirst(' ', 'T'));
-      } catch (_) {
-        return null;
-      }
-    }
+    return WibTime.parse(raw);
   }
 
   static String _normalizeState(Object? raw) {
@@ -44,7 +36,7 @@ class ToiletPermitService {
     final expiresAt = parseDateTime(raw['expires_at']?.toString());
     if (expiresAt == null) return 0;
 
-    final reference = now ?? DateTime.now();
+    final reference = now?.toUtc() ?? DateTime.now().toUtc();
     final seconds = expiresAt.difference(reference).inSeconds;
     return seconds > 0 ? seconds : 0;
   }
@@ -140,6 +132,21 @@ class ToiletPermitService {
       return '${hours}j ${minutes.toString().padLeft(2, '0')}m';
     }
     return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+  }
+
+  static String formatRemainingDetailedLabel(int seconds) {
+    if (seconds <= 0) return '0 detik';
+
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    final secs = seconds % 60;
+    final parts = <String>[];
+
+    if (hours > 0) parts.add('$hours jam');
+    if (minutes > 0 || hours > 0) parts.add('$minutes menit');
+    parts.add('$secs detik');
+
+    return parts.join(' ');
   }
 
   static Future<Map<String, dynamic>> approvePermit(

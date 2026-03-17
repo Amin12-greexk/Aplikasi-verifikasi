@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/theme/app_colors.dart';
-import '../../core/services/tts_service.dart';
+import '../../core/utils/wib_time.dart';
 import 'toilet_permit_service.dart';
 
 class ToiletScannerTab extends StatefulWidget {
@@ -16,7 +16,7 @@ class ToiletScannerTab extends StatefulWidget {
 }
 
 class _ToiletScannerTabState extends State<ToiletScannerTab> {
-  static const double _scanAreaRatio = 0.92;
+  static const double _scanAreaRatio = 0.96;
   static const double _minScanAreaSize = 220.0;
   static const Duration _sameCodeCooldown = Duration(seconds: 4);
   static const List<int> _durationOptions = [5, 10, 15, 20, 30];
@@ -31,7 +31,6 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
   );
 
   bool _isProcessing = false;
-  bool _torchOn = false;
   String? _lastResult;
   String? _lastStatus;
   Color? _lastColor;
@@ -39,7 +38,7 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
   DateTime? _lastScannedAt;
   Timer? _clockTimer;
   final ValueNotifier<DateTime> _currentTimeNotifier = ValueNotifier(
-    DateTime.now(),
+    WibTime.now(),
   );
   double _zoomLevel = 0.25;
   double _baseZoomLevel = 0.25;
@@ -48,10 +47,9 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
   @override
   void initState() {
     super.initState();
-    TtsService.initialize();
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      _currentTimeNotifier.value = DateTime.now();
+      _currentTimeNotifier.value = WibTime.now();
     });
     Future.delayed(const Duration(milliseconds: 1500), () async {
       if (!mounted) return;
@@ -75,33 +73,8 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
     return '$h:$m:$s';
   }
 
-  String _formatTimeLabel(String? raw) {
-    final parsed = ToiletPermitService.parseDateTime(raw);
-    if (parsed == null) return '-';
-
-    final local = parsed.toLocal();
-    final h = local.hour.toString().padLeft(2, '0');
-    final m = local.minute.toString().padLeft(2, '0');
-    return '$h:$m';
-  }
-
-  Future<void> _playSound(Future<void> Function() soundFunction) async {
-    try {
-      await soundFunction();
-    } catch (_) {}
-  }
-
-  void _toggleTorch() {
-    _controller.toggleTorch();
-    setState(() => _torchOn = !_torchOn);
-  }
-
-  void _resetZoom() {
-    setState(() {
-      _zoomLevel = 0.25;
-      _baseZoomLevel = 0.25;
-    });
-    _controller.setZoomScale(0.25);
+  String _formatTimeLabel(String? raw, {bool withSeconds = false}) {
+    return WibTime.formatTime(raw, withSeconds: withSeconds);
   }
 
   void _onZoomChanged(double value) {
@@ -171,6 +144,135 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
     return fullBarcode.trim();
   }
 
+  Future<bool> _showSecurityApprovalDialog({
+    required String nama,
+    required String pin,
+    required Map<String, dynamic> permit,
+  }) async {
+    final approvedBy = permit['approved_by']?.toString().trim() ?? '';
+    final approvedAt = _formatTimeLabel(
+      permit['approved_at']?.toString(),
+      withSeconds: true,
+    );
+    final expiresAt = _formatTimeLabel(
+      permit['expires_at']?.toString(),
+      withSeconds: true,
+    );
+    final remaining = ToiletPermitService.remainingSecondsForPermit(permit);
+    final alreadyScanned = ToiletPermitService.isProofScanned(permit);
+    final proofBy = permit['proof_scanned_by']?.toString().trim() ?? '';
+    final proofAt = _formatTimeLabel(
+      permit['proof_scanned_at']?.toString(),
+      withSeconds: true,
+    );
+    final employeeLabel = nama.isNotEmpty ? '$nama (PIN: $pin)' : 'PIN: $pin';
+
+    final proceed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: !alreadyScanned,
+      builder: (context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                alreadyScanned ? Icons.verified_user : Icons.badge,
+                color: alreadyScanned ? AppColors.success : AppColors.pengawas,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  alreadyScanned
+                      ? 'Izin Sudah Pernah Discan'
+                      : 'Sudah Izin Pengawas',
+                  style: const TextStyle(fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                employeeLabel,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _modalInfoRow(
+                'Disetujui oleh',
+                approvedBy.isEmpty ? 'Pengawas belum tercatat' : approvedBy,
+              ),
+              const SizedBox(height: 8),
+              _modalInfoRow(
+                'Jam disetujui',
+                approvedAt == '-' ? 'Belum ada jam persetujuan' : approvedAt,
+              ),
+              const SizedBox(height: 8),
+              _modalInfoRow(
+                'Batas kembali',
+                expiresAt == '-' ? 'Batas belum tersedia' : expiresAt,
+              ),
+              const SizedBox(height: 8),
+              _modalInfoRow(
+                'Sisa waktu',
+                ToiletPermitService.formatRemainingDetailedLabel(remaining),
+              ),
+              if (alreadyScanned) ...[
+                const SizedBox(height: 8),
+                _modalInfoRow(
+                  'Security',
+                  '${proofBy.isEmpty ? 'Sudah discan security' : proofBy} ${proofAt == '-' ? '' : 'pada $proofAt'}'
+                      .trim(),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(alreadyScanned ? 'Tutup' : 'Batal'),
+            ),
+            if (!alreadyScanned)
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Lanjut Proof Scan'),
+              ),
+          ],
+        );
+      },
+    );
+
+    return proceed ?? false;
+  }
+
+  Widget _modalInfoRow(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _onDetect(BarcodeCapture capture) async {
     if (_isProcessing) return;
 
@@ -205,7 +307,6 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
         _lastStatus = 'error';
         _lastColor = AppColors.error;
       });
-      await _playSound(TtsService.qrTidakDikenal);
       return;
     }
 
@@ -219,6 +320,40 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
           durationMinutes: _selectedDuration,
         );
       } else {
+        final permitStatus = await ToiletPermitService.fetchPermitStatus(
+          scanId,
+        );
+        if (ToiletPermitService.isExpiredPermit(permitStatus)) {
+          setState(() {
+            _lastResult = '$nama (PIN: $pin)\nIzin toilet sudah habis';
+            _lastStatus = 'error';
+            _lastColor = AppColors.error;
+          });
+          return;
+        }
+
+        final shouldContinue = await _showSecurityApprovalDialog(
+          nama: nama,
+          pin: pin,
+          permit: permitStatus,
+        );
+        if (!mounted) return;
+        if (!shouldContinue) {
+          if (ToiletPermitService.isProofScanned(permitStatus)) {
+            final proofBy = permitStatus['proof_scanned_by']?.toString().trim();
+            final proofAt = _formatTimeLabel(
+              permitStatus['proof_scanned_at']?.toString(),
+              withSeconds: true,
+            );
+            setState(() {
+              _lastResult =
+                  '$nama (PIN: $pin)\nSudah pernah discan security${proofBy == null || proofBy.isEmpty ? '' : ' oleh $proofBy'}${proofAt == '-' ? '' : ' pada $proofAt'}';
+              _lastStatus = 'duplicate';
+              _lastColor = AppColors.warning;
+            });
+          }
+          return;
+        }
         result = await ToiletPermitService.proofScan(scanId);
       }
 
@@ -236,16 +371,6 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
         _lastStatus = isDuplicate ? 'duplicate' : 'success';
         _lastColor = isDuplicate ? AppColors.warning : AppColors.success;
       });
-
-      await _playSound(
-        isDuplicate
-            ? (widget.isPengawas
-                  ? TtsService.duplikatPengawas
-                  : TtsService.duplikatSecurity)
-            : (widget.isPengawas
-                  ? TtsService.scanPengawasBerhasil
-                  : TtsService.scanSecurityBerhasil),
-      );
     } catch (e) {
       final errorStr = e.toString();
       setState(() {
@@ -253,7 +378,6 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
         _lastStatus = 'error';
         _lastColor = AppColors.error;
       });
-      await _playSound(TtsService.gagalKoneksi);
     } finally {
       if (mounted) {
         setState(() => _isProcessing = false);
@@ -264,228 +388,14 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
   @override
   Widget build(BuildContext context) {
     final isPengawas = widget.isPengawas;
+    final isLocked = _isProcessing;
 
     return Column(
-      children: [
-        _buildHeader(isPengawas),
-        const SizedBox(height: 12),
-        _buildAlertBox(isPengawas),
-        if (isPengawas) ...[
-          const SizedBox(height: 12),
-          _buildDurationSelector(),
-        ],
-        const SizedBox(height: 12),
-        Expanded(child: _buildScannerBox()),
-        const SizedBox(height: 8),
-        _buildZoomSlider(),
-        const SizedBox(height: 8),
-        _buildModeDescription(isPengawas),
-        const SizedBox(height: 12),
-        if (_lastResult != null) _buildResultBox(),
-        if (_isProcessing) _buildProcessing(),
-        const SizedBox(height: 8),
-      ],
+      children: [Expanded(child: _buildScannerBox(isPengawas, isLocked))],
     );
   }
 
-  Widget _buildHeader(bool isPengawas) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.cardBorder),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: isPengawas
-                  ? AppColors.pengawasSurface
-                  : AppColors.securitySurface,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              Icons.wc,
-              color: isPengawas ? AppColors.pengawas : AppColors.security,
-              size: 22,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isPengawas
-                      ? 'Scanner Izin Toilet Pengawas'
-                      : 'Scanner Proof Toilet Security',
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                Text(
-                  isPengawas
-                      ? 'Buat izin toilet dan timer mitra'
-                      : 'Validasi QR mitra yang sudah diizinkan',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: AppColors.background,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: ValueListenableBuilder<DateTime>(
-              valueListenable: _currentTimeNotifier,
-              builder: (context, time, _) {
-                return Text(
-                  _formatClock(time),
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                    color: AppColors.textPrimary,
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(width: 4),
-          IconButton(
-            onPressed: _resetZoom,
-            tooltip: 'Reset Zoom 25%',
-            icon: const Icon(
-              Icons.center_focus_strong,
-              color: AppColors.textSecondary,
-              size: 20,
-            ),
-          ),
-          IconButton(
-            onPressed: _toggleTorch,
-            icon: Icon(
-              _torchOn ? Icons.flash_on : Icons.flash_off,
-              color: _torchOn ? AppColors.warning : AppColors.textSecondary,
-              size: 20,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAlertBox(bool isPengawas) {
-    final color = _isProcessing
-        ? AppColors.warning
-        : (isPengawas ? AppColors.pengawas : AppColors.security);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: color.withAlpha(18),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withAlpha(45)),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            _isProcessing ? Icons.hourglass_top : Icons.info_outline,
-            size: 18,
-            color: color,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              _isProcessing
-                  ? 'Sedang memproses izin toilet... Harap tunggu.'
-                  : isPengawas
-                  ? 'Scan QR mitra untuk memberi izin toilet dan mengaktifkan timer.'
-                  : 'Scan QR mitra untuk memastikan izin toilet masih aktif.',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: color,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDurationSelector() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.cardBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Durasi Izin Toilet',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _durationOptions.map((option) {
-              final isSelected = _selectedDuration == option;
-              return InkWell(
-                onTap: () => setState(() => _selectedDuration = option),
-                borderRadius: BorderRadius.circular(10),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? AppColors.pengawas
-                        : AppColors.background,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: isSelected
-                          ? AppColors.pengawas
-                          : AppColors.cardBorder,
-                    ),
-                  ),
-                  child: Text(
-                    '$option menit',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: isSelected
-                          ? Colors.white
-                          : AppColors.textSecondary,
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildScannerBox() {
+  Widget _buildScannerBox(bool isPengawas, bool isLocked) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(20),
       child: LayoutBuilder(
@@ -552,36 +462,39 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
                     );
                   },
                 ),
-                _buildScannerOverlay(scanAreaSize),
-                Positioned(top: 16, left: 16, child: _corner(0)),
-                Positioned(top: 16, right: 16, child: _corner(1)),
-                Positioned(bottom: 16, right: 16, child: _corner(2)),
-                Positioned(bottom: 16, left: 16, child: _corner(3)),
-                Positioned(
-                  bottom: 12,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withAlpha(140),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        '${(_zoomLevel * 100).toInt()}% zoom',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
+                IgnorePointer(child: _buildScannerOverlay(scanAreaSize)),
+                if (!isLocked)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: AppColors.primary.withAlpha(100),
+                            width: 2,
+                          ),
+                          borderRadius: BorderRadius.circular(20),
                         ),
                       ),
                     ),
                   ),
-                ),
+                Positioned(top: 16, left: 16, child: _corner(0)),
+                Positioned(top: 16, right: 16, child: _corner(1)),
+                Positioned(bottom: 16, right: 16, child: _corner(2)),
+                Positioned(bottom: 16, left: 16, child: _corner(3)),
+                Positioned(top: 20, left: 20, child: _buildClockChip()),
+                if (isPengawas)
+                  Positioned(
+                    top: 20,
+                    right: 20,
+                    child: _buildDurationChip(isLocked),
+                  ),
+                if (_lastResult != null)
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 18,
+                    child: _buildResultOverlay(),
+                  ),
                 if (_isProcessing)
                   Positioned.fill(
                     child: Container(
@@ -612,6 +525,84 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
           border: Border(
             top: BorderSide(color: AppColors.primary, width: 3),
             left: BorderSide(color: AppColors.primary, width: 3),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildClockChip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(115),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withAlpha(45)),
+      ),
+      child: ValueListenableBuilder<DateTime>(
+        valueListenable: _currentTimeNotifier,
+        builder: (context, time, _) {
+          return Text(
+            _formatClock(time),
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              fontFeatures: [FontFeature.tabularFigures()],
+              color: Colors.white,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildDurationChip(bool isLocked) {
+    return Material(
+      color: Colors.transparent,
+      child: PopupMenuButton<int>(
+        tooltip: 'Pilih Durasi Izin',
+        initialValue: _selectedDuration,
+        enabled: !isLocked,
+        padding: EdgeInsets.zero,
+        position: PopupMenuPosition.under,
+        onSelected: (value) => setState(() => _selectedDuration = value),
+        itemBuilder: (context) => _durationOptions
+            .map(
+              (option) => PopupMenuItem<int>(
+                value: option,
+                child: Text('$option menit'),
+              ),
+            )
+            .toList(),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withAlpha(isLocked ? 155 : 115),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isLocked
+                  ? Colors.white.withAlpha(70)
+                  : AppColors.pengawas.withAlpha(95),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.timer_outlined,
+                size: 16,
+                color: isLocked ? Colors.white : AppColors.pengawasSurface,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '${_selectedDuration}m',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -652,118 +643,17 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
             ),
           ),
         ),
-        const Positioned(
-          top: 20,
-          left: 0,
-          right: 0,
-          child: Center(
-            child: Text(
-              'Posisikan QR di dalam kotak',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                shadows: [Shadow(color: Colors.black, blurRadius: 4)],
-              ),
-            ),
-          ),
-        ),
       ],
     );
   }
 
-  Widget _buildZoomSlider() {
+  Widget _buildResultOverlay() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: Colors.black.withAlpha(135),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.cardBorder),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.zoom_out, size: 18, color: AppColors.textSecondary),
-          Expanded(
-            child: SliderTheme(
-              data: SliderTheme.of(context).copyWith(
-                trackHeight: 3,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-                activeTrackColor: AppColors.primary,
-                inactiveTrackColor: AppColors.primary.withAlpha(40),
-                thumbColor: AppColors.primary,
-                overlayColor: AppColors.primary.withAlpha(30),
-              ),
-              child: Slider(
-                value: _zoomLevel,
-                min: 0.0,
-                max: 1.0,
-                onChanged: _onZoomChanged,
-              ),
-            ),
-          ),
-          const Icon(Icons.zoom_in, size: 18, color: AppColors.textSecondary),
-          const SizedBox(width: 6),
-          SizedBox(
-            width: 38,
-            child: Text(
-              '${(_zoomLevel * 100).toInt()}%',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildModeDescription(bool isPengawas) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.cardBorder),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.info_outline,
-            size: 20,
-            color: isPengawas ? AppColors.pengawas : AppColors.security,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              isPengawas
-                  ? 'Pengawas: scan QR untuk membuat izin toilet dengan timer aktif.'
-                  : 'Security: scan QR untuk membuktikan bahwa izin toilet masih berlaku.',
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w400,
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildResultBox() {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: (_lastColor ?? AppColors.textSecondary).withAlpha(20),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: (_lastColor ?? AppColors.textSecondary).withAlpha(60),
-        ),
+        border: Border.all(color: (_lastColor ?? Colors.white).withAlpha(110)),
       ),
       child: Row(
         children: [
@@ -773,52 +663,19 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
                 : _lastStatus == 'duplicate'
                 ? Icons.info
                 : Icons.error,
-            color: _lastColor ?? AppColors.textSecondary,
-            size: 28,
+            color: _lastColor ?? Colors.white,
+            size: 24,
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
               _lastResult ?? '',
               style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: _lastColor ?? AppColors.textSecondary,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProcessing() {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.primary.withAlpha(20),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.primary.withAlpha(60)),
-      ),
-      child: const Row(
-        children: [
-          SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.5,
-              valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-            ),
-          ),
-          SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              'Memproses izin toilet...',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: AppColors.primary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: _lastColor == AppColors.warning
+                    ? Colors.white
+                    : (_lastColor ?? Colors.white),
               ),
             ),
           ),

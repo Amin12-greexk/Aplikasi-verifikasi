@@ -56,8 +56,42 @@ Future<T> _retryDbOperation<T>(
   throw Exception('Max retries exceeded');
 }
 
+const Duration _wibOffset = Duration(hours: 7);
+
+DateTime _nowUtc() => DateTime.now().toUtc();
+
+DateTime _toWib(DateTime value) => value.toUtc().add(_wibOffset);
+
+String _twoDigits(int value) => value.toString().padLeft(2, '0');
+
+String _threeDigits(int value) => value.toString().padLeft(3, '0');
+
+String _formatWibIso(DateTime value) {
+  final wib = _toWib(value);
+  return '${wib.year}-${_twoDigits(wib.month)}-${_twoDigits(wib.day)}T'
+      '${_twoDigits(wib.hour)}:${_twoDigits(wib.minute)}:${_twoDigits(wib.second)}.'
+      '${_threeDigits(wib.millisecond)}+07:00';
+}
+
+DateTime _nextWibMidnightUtc([DateTime? referenceUtc]) {
+  final nowUtc = referenceUtc ?? _nowUtc();
+  final nowWib = _toWib(nowUtc);
+  return DateTime.utc(
+    nowWib.year,
+    nowWib.month,
+    nowWib.day + 1,
+  ).subtract(_wibOffset);
+}
+
+bool _hasExplicitTimezone(String value) {
+  return value.endsWith('Z') ||
+      RegExp(r'[+-]\d{2}:\d{2}$').hasMatch(value) ||
+      RegExp(r'[+-]\d{4}$').hasMatch(value);
+}
+
 String _formatDate(DateTime value) {
-  return '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+  final wib = _toWib(value);
+  return '${wib.year}-${_twoDigits(wib.month)}-${_twoDigits(wib.day)}';
 }
 
 DateTime? _tryParseDateTime(Object? raw) {
@@ -65,13 +99,24 @@ DateTime? _tryParseDateTime(Object? raw) {
   if (value == null || value.isEmpty) return null;
 
   try {
-    return DateTime.parse(value);
-  } catch (_) {
-    try {
-      return DateTime.parse(value.replaceFirst(' ', 'T'));
-    } catch (_) {
-      return null;
+    final normalized = value.replaceFirst(' ', 'T');
+    if (_hasExplicitTimezone(normalized)) {
+      return DateTime.parse(normalized).toUtc();
     }
+
+    final parsed = DateTime.parse(normalized);
+    return DateTime.utc(
+      parsed.year,
+      parsed.month,
+      parsed.day,
+      parsed.hour,
+      parsed.minute,
+      parsed.second,
+      parsed.millisecond,
+      parsed.microsecond,
+    ).subtract(_wibOffset);
+  } catch (_) {
+    return null;
   }
 }
 
@@ -87,7 +132,7 @@ String _resolveToiletPermitState(Object? expiresAtRaw, {DateTime? now}) {
   final expiresAt = _tryParseDateTime(expiresAtRaw);
   if (expiresAt == null) return 'ACTIVE';
 
-  final reference = now ?? DateTime.now();
+  final reference = now ?? _nowUtc();
   return expiresAt.isAfter(reference) ? 'ACTIVE' : 'EXPIRED';
 }
 
@@ -95,7 +140,7 @@ int _remainingPermitSeconds(Object? expiresAtRaw, {DateTime? now}) {
   final expiresAt = _tryParseDateTime(expiresAtRaw);
   if (expiresAt == null) return 0;
 
-  final reference = now ?? DateTime.now();
+  final reference = now ?? _nowUtc();
   final remaining = expiresAt.difference(reference).inSeconds;
   return remaining > 0 ? remaining : 0;
 }
@@ -104,7 +149,7 @@ Map<String, Object?> _mapToiletPermitRow(
   Map<String, Object?> row, {
   DateTime? now,
 }) {
-  final reference = now ?? DateTime.now();
+  final reference = now ?? _nowUtc();
   final permitState = _resolveToiletPermitState(
     row['expires_at'],
     now: reference,
@@ -153,7 +198,7 @@ void _saveToiletPermitHistory(
   DateTime? now,
   String? permitState,
 }) {
-  final reference = now ?? DateTime.now();
+  final reference = now ?? _nowUtc();
   db.execute(
     'INSERT INTO toilet_permit_history(id_karyawan, duration_minutes, approved_by, approved_at, expires_at, proof_scanned_by, proof_scanned_at, proof_status, permit_state, tanggal) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     [
@@ -176,7 +221,7 @@ void _saveToiletPermitHistory(
 /// Moves all current logs to history and clears the active tables.
 Future<Map<String, dynamic>> performDailyReset(Database db) async {
   try {
-    final today = DateTime.now();
+    final today = _nowUtc();
     final tanggal = _formatDate(today);
 
     return await _retryDbOperation(() async {
@@ -219,7 +264,7 @@ Future<Map<String, dynamic>> performDailyReset(Database db) async {
         db.execute('COMMIT');
 
         stdout.writeln(
-          '[DAILY RESET] Reset completed at ${DateTime.now().toIso8601String()}',
+          '[DAILY RESET] Reset completed at ${_formatWibIso(_nowUtc())}',
         );
         stdout.writeln(
           '[DAILY RESET] Moved $movedCount logs and $movedPermitCount toilet permits to history for date: $tanggal',
@@ -231,7 +276,7 @@ Future<Map<String, dynamic>> performDailyReset(Database db) async {
           'tanggal': tanggal,
           'moved': movedCount,
           'moved_toilet_permits': movedPermitCount,
-          'timestamp': DateTime.now().toIso8601String(),
+          'timestamp': _formatWibIso(_nowUtc()),
         };
       } catch (e) {
         db.execute('ROLLBACK');
@@ -257,19 +302,21 @@ void startDailyResetScheduler(Database db) {
   _dailyResetTimer?.cancel();
 
   void scheduleNextReset() {
-    final now = DateTime.now();
-    final nextMidnight = DateTime(now.year, now.month, now.day + 1, 0, 0, 0);
-    final duration = nextMidnight.difference(now);
+    final nowUtc = _nowUtc();
+    final nextMidnightUtc = _nextWibMidnightUtc(nowUtc);
+    final duration = nextMidnightUtc.difference(nowUtc);
 
     stdout.writeln(
-      '[SCHEDULER] Daily reset scheduled for: ${nextMidnight.toIso8601String()}',
+      '[SCHEDULER] Daily reset scheduled for WIB: ${_formatWibIso(nextMidnightUtc)}',
     );
     stdout.writeln(
       '[SCHEDULER] Time until next reset: ${duration.inHours}h ${duration.inMinutes % 60}m ${duration.inSeconds % 60}s',
     );
 
     _dailyResetTimer = Timer(duration, () async {
-      stdout.writeln('[SCHEDULER] Triggering automatic daily reset at 00:00');
+      stdout.writeln(
+        '[SCHEDULER] Triggering automatic daily reset at 00:00 WIB',
+      );
 
       final result = await performDailyReset(db);
 
@@ -321,8 +368,8 @@ Future<Router> buildRouter(Database db) async {
     String? pengawasAt,
     String? securityAt,
   ]) {
-    final today = DateTime.now();
-    final nowIso = DateTime.now().toIso8601String();
+    final today = _nowUtc();
+    final nowIso = _formatWibIso(today);
     final tanggal = _formatDate(today);
     db.execute(
       'INSERT INTO log_pulang_history(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, security_scanned_by, pengawas_scanned_at, security_scanned_at, tanggal) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
@@ -389,7 +436,7 @@ Future<Router> buildRouter(Database db) async {
 
     try {
       await _retryDbOperation(() async {
-        final nowIso = DateTime.now().toIso8601String();
+        final nowIso = _formatWibIso(_nowUtc());
         db.execute(
           'INSERT INTO log_pulang(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, pengawas_scanned_at) VALUES(?, "ACC", "PENDING", ?, ?) '
           'ON CONFLICT(id_karyawan) DO UPDATE SET status_pengawas="ACC", pengawas_scanned_by=?, pengawas_scanned_at=?;',
@@ -398,7 +445,7 @@ Future<Router> buildRouter(Database db) async {
         return null;
       });
 
-      final nowIso = DateTime.now().toIso8601String();
+      final nowIso = _formatWibIso(_nowUtc());
       saveToHistory(id, 'ACC', 'PENDING', username, null, nowIso, null);
       final row = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
         id,
@@ -426,7 +473,7 @@ Future<Router> buildRouter(Database db) async {
       final row = Map<String, Object?>.from(rows.first);
       if (row['status_pengawas'] != 'ACC') return bad('Pengawas belum ACC');
 
-      final nowIso = DateTime.now().toIso8601String();
+      final nowIso = _formatWibIso(_nowUtc());
       await _retryDbOperation(() async {
         db.execute(
           'UPDATE log_pulang SET status_security="ACC", security_scanned_by=?, security_scanned_at=? WHERE id_karyawan=?',
@@ -467,11 +514,11 @@ Future<Router> buildRouter(Database db) async {
       if (username == null || username.isEmpty) return bad('username wajib');
 
       id = _extractBarcodeInfo(id);
-      final now = DateTime.now();
-      final nowIso = now.toIso8601String();
-      final expiresAtIso = now
-          .add(Duration(minutes: durationMinutes))
-          .toIso8601String();
+      final now = _nowUtc();
+      final expiresAtIso = _formatWibIso(
+        now.add(Duration(minutes: durationMinutes)),
+      );
+      final approvedAtIso = _formatWibIso(now);
       final existing = db.select(
         'SELECT id_karyawan FROM toilet_permit WHERE id_karyawan=?',
         [id],
@@ -485,11 +532,11 @@ Future<Router> buildRouter(Database db) async {
             id,
             durationMinutes,
             username,
-            nowIso,
+            approvedAtIso,
             expiresAtIso,
             durationMinutes,
             username,
-            nowIso,
+            approvedAtIso,
             expiresAtIso,
           ],
         );
@@ -531,7 +578,7 @@ Future<Router> buildRouter(Database db) async {
       );
       if (rows.isEmpty) return bad('Belum ada izin toilet dari pengawas');
 
-      final now = DateTime.now();
+      final now = _nowUtc();
       final permit = Map<String, Object?>.from(rows.first);
       final permitState = _resolveToiletPermitState(
         permit['expires_at'],
@@ -549,7 +596,7 @@ Future<Router> buildRouter(Database db) async {
         });
       }
 
-      final nowIso = now.toIso8601String();
+      final nowIso = _formatWibIso(now);
       await _retryDbOperation(() async {
         db.execute(
           'UPDATE toilet_permit SET proof_scanned_by=?, proof_scanned_at=?, proof_status="SCANNED" WHERE id_karyawan=?',

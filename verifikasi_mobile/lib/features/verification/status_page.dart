@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/services/daily_refresh_manager.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/wib_time.dart';
 import 'verification_service.dart';
 
 class StatusTab extends StatefulWidget {
@@ -53,19 +54,16 @@ class _StatusTabState extends State<StatusTab> {
   }
 
   String _formatTimeLabel(String? raw) {
+    final formatted = WibTime.formatTime(raw);
+    if (formatted != '-') return formatted;
+
     if (raw == null || raw.isEmpty || raw == '-') return '-';
-    try {
-      if (raw.contains('T')) {
-        final dt = DateTime.parse(raw).toLocal();
-        return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    if (raw.contains(':')) {
+      final parts = raw.split(':');
+      if (parts.length >= 2) {
+        return '${parts[0].padLeft(2, '0')}:${parts[1].padLeft(2, '0')}';
       }
-      if (raw.contains(':')) {
-        final parts = raw.split(':');
-        if (parts.length >= 2) {
-          return '${parts[0].padLeft(2, '0')}:${parts[1].padLeft(2, '0')}';
-        }
-      }
-    } catch (_) {}
+    }
     return raw;
   }
 
@@ -83,7 +81,7 @@ class _StatusTabState extends State<StatusTab> {
           await VerificationService.dailyReset();
           await DailyRefreshManager.markAsRefreshed();
         } catch (e) {
-          print('[Status] Daily reset failed: $e');
+          debugPrint('[Status] Daily reset failed: $e');
         }
       }
 
@@ -105,8 +103,9 @@ class _StatusTabState extends State<StatusTab> {
   }
 
   Color _statusColor(String pengawas, String security) {
-    if (pengawas == 'approved' && security == 'approved')
+    if (pengawas == 'approved' && security == 'approved') {
       return AppColors.success;
+    }
     if (pengawas == 'approved') return AppColors.info;
     return AppColors.warning;
   }
