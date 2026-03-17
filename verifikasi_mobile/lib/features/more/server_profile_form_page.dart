@@ -27,8 +27,12 @@ class _ServerProfileFormPageState extends State<ServerProfileFormPage> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.profile?.name ?? '');
-    _urlController = TextEditingController(text: widget.profile?.baseUrl ?? 'https://');
-    _enabledModules = List.from(widget.profile?.enabledModules ?? ['verification', 'history']);
+    _urlController = TextEditingController(
+      text: widget.profile?.baseUrl ?? 'https://',
+    );
+    _enabledModules = List.from(
+      widget.profile?.enabledModules ?? ['verification', 'toilet', 'history'],
+    );
   }
 
   @override
@@ -62,7 +66,9 @@ class _ServerProfileFormPageState extends State<ServerProfileFormPage> {
         Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(isEdit ? 'Profile diperbarui' : 'Profile ditambahkan'),
+            content: Text(
+              isEdit ? 'Profile diperbarui' : 'Profile ditambahkan',
+            ),
             backgroundColor: AppColors.success,
           ),
         );
@@ -71,7 +77,10 @@ class _ServerProfileFormPageState extends State<ServerProfileFormPage> {
       if (mounted) {
         setState(() => _isSaving = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.error),
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: AppColors.error,
+          ),
         );
       }
     }
@@ -80,9 +89,7 @@ class _ServerProfileFormPageState extends State<ServerProfileFormPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(isEdit ? 'Edit Profile' : 'Tambah Profile'),
-      ),
+      appBar: AppBar(title: Text(isEdit ? 'Edit Profile' : 'Tambah Profile')),
       body: Form(
         key: _formKey,
         child: ListView(
@@ -91,7 +98,11 @@ class _ServerProfileFormPageState extends State<ServerProfileFormPage> {
             // Name field
             const Text(
               'Nama Profile',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSecondary,
+              ),
             ),
             const SizedBox(height: 8),
             TextFormField(
@@ -100,7 +111,9 @@ class _ServerProfileFormPageState extends State<ServerProfileFormPage> {
                 hintText: 'contoh: Development',
                 prefixIcon: Icon(Icons.label_outline),
               ),
-              validator: (v) => (v == null || v.trim().isEmpty) ? 'Nama tidak boleh kosong' : null,
+              validator: (v) => (v == null || v.trim().isEmpty)
+                  ? 'Nama tidak boleh kosong'
+                  : null,
             ),
 
             const SizedBox(height: 20),
@@ -108,7 +121,11 @@ class _ServerProfileFormPageState extends State<ServerProfileFormPage> {
             // URL field
             const Text(
               'Server URL',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSecondary,
+              ),
             ),
             const SizedBox(height: 8),
             TextFormField(
@@ -119,7 +136,9 @@ class _ServerProfileFormPageState extends State<ServerProfileFormPage> {
               ),
               keyboardType: TextInputType.url,
               validator: (v) {
-                if (v == null || v.trim().isEmpty) return 'URL tidak boleh kosong';
+                if (v == null || v.trim().isEmpty) {
+                  return 'URL tidak boleh kosong';
+                }
                 if (!v.startsWith('http://') && !v.startsWith('https://')) {
                   return 'URL harus dimulai dengan http:// atau https://';
                 }
@@ -132,7 +151,11 @@ class _ServerProfileFormPageState extends State<ServerProfileFormPage> {
             // Enabled modules
             const Text(
               'Modul Aktif',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSecondary,
+              ),
             ),
             const SizedBox(height: 8),
             Container(
@@ -176,7 +199,10 @@ class _ServerProfileFormPageState extends State<ServerProfileFormPage> {
                   ? const SizedBox(
                       width: 20,
                       height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
                     )
                   : Text(isEdit ? 'Simpan Perubahan' : 'Tambah Profile'),
             ),

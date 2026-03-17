@@ -76,10 +76,17 @@ Buat record:
 Klik `Deploy` lalu cek:
 
 - `https://api.domainkamu.com/logs`
+- `https://api.domainkamu.com/toilet-permits`
 - Harus return JSON seperti:
 
 ```json
 {"logs":[]}
+```
+
+Dan untuk izin toilet:
+
+```json
+{"permits":[]}
 ```
 
 ## Quick Alternative (if Build Path not used)
@@ -92,4 +99,5 @@ Kalau kamu tidak pakai Build Path `/verifikasi_api`, pakai konfigurasi ini:
 ## Notes
 
 - Simpan data SQLite di `/data` agar tidak hilang saat redeploy.
+- Migration SQLite untuk fitur izin toilet jalan otomatis saat container start.
 - Jangan expose port via `Advanced -> Ports` jika sudah pakai `Domains` (routing cukup lewat Traefik/domain).

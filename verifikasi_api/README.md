@@ -9,10 +9,15 @@ Semua endpoint utama disamakan dengan server desktop:
 - `POST /auth/login`
 - `POST /scan-pengawas`
 - `POST /scan-security`
+- `POST /toilet-permit/approve`
+- `POST /toilet-permit/proof-scan`
 - `GET /status/<id>`
 - `GET /logs`
 - `GET /logs/`
+- `GET /toilet-permits`
+- `GET /toilet-permit/status/<id>`
 - `GET /logs-history/<tanggal>`
+- `GET /toilet-permits-history/<tanggal>`
 - `GET /dates-history`
 - `POST /daily-reset`
 - `POST /logs`
@@ -71,3 +76,11 @@ Template field-by-field:
    - Mount path: `/data`
 6. Tambah domain dan route ke port container `8080`.
 7. Update `Server URL` di aplikasi mobile ke domain API (HTTPS).
+
+## Catatan fitur izin toilet
+
+- Tidak perlu environment variable tambahan untuk fitur ini.
+- Tabel `toilet_permit` dan `toilet_permit_history` dibuat otomatis saat service boot.
+- Smoke test minimal setelah deploy:
+  - `GET /logs`
+  - `GET /toilet-permits`

@@ -13,7 +13,7 @@ class ServerProfile {
     required this.id,
     required this.name,
     required this.baseUrl,
-    this.enabledModules = const ['verification', 'history'],
+    this.enabledModules = const ['verification', 'toilet', 'history'],
     this.isDefault = false,
   });
 
@@ -22,13 +22,14 @@ class ServerProfile {
     id: 'production',
     name: 'Production',
     baseUrl: 'https://veriv.tunasestaindonesia.com',
-    enabledModules: ['verification', 'history'],
+    enabledModules: ['verification', 'toilet', 'history'],
     isDefault: true,
   );
 
   /// All available module keys
   static const List<String> allModules = [
     'verification',
+    'toilet',
     'attendance',
     'history',
   ];
@@ -36,6 +37,7 @@ class ServerProfile {
   /// Module display names
   static const Map<String, String> moduleLabels = {
     'verification': 'Verifikasi',
+    'toilet': 'Izin Toilet',
     'attendance': 'Absensi',
     'history': 'Riwayat',
   };
@@ -73,10 +75,11 @@ class ServerProfile {
       id: json['id'] as String,
       name: json['name'] as String,
       baseUrl: json['baseUrl'] as String,
-      enabledModules: (json['enabledModules'] as List<dynamic>?)
+      enabledModules:
+          (json['enabledModules'] as List<dynamic>?)
               ?.map((e) => e.toString())
               .toList() ??
-          ['verification', 'history'],
+          ['verification', 'toilet', 'history'],
       isDefault: json['isDefault'] as bool? ?? false,
     );
   }

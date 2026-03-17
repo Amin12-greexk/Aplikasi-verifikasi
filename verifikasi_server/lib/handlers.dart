@@ -7,14 +7,12 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 String _generateToken(String username, String role) {
-  // Simple token generation - in production use JWT
+  // Simple token generation - in production use JWT.
   return 'token_${username}_${role}_${DateTime.now().millisecondsSinceEpoch}';
 }
 
 String _extractBarcodeInfo(String fullBarcode) {
-  // Extract PIN, Nama, and Bagian from barcode string
-  // Example input: "Nama: SURATI | PIN: 12053 | NIK: 3321125211850005 | Bagian: Cuci Hancuran | Alamat: ..."
-  // Returns: "PIN: 12053 | Nama: SURATI | Bagian: Cuci Hancuran"
+  // Extract PIN, Nama, and Bagian from barcode string.
   try {
     final namaMatch = RegExp(r'Nama:\s*([^|]+)').firstMatch(fullBarcode);
     final pinMatch = RegExp(r'PIN:\s*([^|]+)').firstMatch(fullBarcode);
@@ -25,30 +23,30 @@ String _extractBarcodeInfo(String fullBarcode) {
     final bagian = bagianMatch?.group(1)?.trim() ?? '';
 
     if (nama.isEmpty && pin.isEmpty && bagian.isEmpty) {
-      // If parsing fails, return original string
       return fullBarcode;
     }
 
-    // Format: "PIN: 12053 | Nama: SURATI | Bagian: Cuci Hancuran"
-    final List<String> parts = [];
+    final parts = <String>[];
     if (pin.isNotEmpty) parts.add('PIN: $pin');
     if (nama.isNotEmpty) parts.add('Nama: $nama');
     if (bagian.isNotEmpty) parts.add('Bagian: $bagian');
 
     return parts.join(' | ');
-  } catch (e) {
+  } catch (_) {
     return fullBarcode;
   }
 }
 
-// Retry logic for database operations
-Future<T> _retryDbOperation<T>(Future<T> Function() operation, {int maxRetries = 3}) async {
+// Retry logic for database operations.
+Future<T> _retryDbOperation<T>(
+  Future<T> Function() operation, {
+  int maxRetries = 3,
+}) async {
   for (int i = 0; i < maxRetries; i++) {
     try {
       return await operation();
     } catch (e) {
       if (e.toString().contains('database is locked') && i < maxRetries - 1) {
-        // Wait a bit before retrying
         await Future.delayed(Duration(milliseconds: 100 * (i + 1)));
         continue;
       }
@@ -58,23 +56,136 @@ Future<T> _retryDbOperation<T>(Future<T> Function() operation, {int maxRetries =
   throw Exception('Max retries exceeded');
 }
 
-/// Performs the daily reset operation
-/// Moves all current logs to history and clears the log_pulang table
+String _formatDate(DateTime value) {
+  return '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+}
+
+DateTime? _tryParseDateTime(Object? raw) {
+  final value = raw?.toString().trim();
+  if (value == null || value.isEmpty) return null;
+
+  try {
+    return DateTime.parse(value);
+  } catch (_) {
+    try {
+      return DateTime.parse(value.replaceFirst(' ', 'T'));
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+int _normalizeDurationMinutes(Object? raw) {
+  final parsed = int.tryParse(raw?.toString() ?? '');
+  if (parsed == null) return 10;
+  if (parsed < 1) return 1;
+  if (parsed > 120) return 120;
+  return parsed;
+}
+
+String _resolveToiletPermitState(Object? expiresAtRaw, {DateTime? now}) {
+  final expiresAt = _tryParseDateTime(expiresAtRaw);
+  if (expiresAt == null) return 'ACTIVE';
+
+  final reference = now ?? DateTime.now();
+  return expiresAt.isAfter(reference) ? 'ACTIVE' : 'EXPIRED';
+}
+
+int _remainingPermitSeconds(Object? expiresAtRaw, {DateTime? now}) {
+  final expiresAt = _tryParseDateTime(expiresAtRaw);
+  if (expiresAt == null) return 0;
+
+  final reference = now ?? DateTime.now();
+  final remaining = expiresAt.difference(reference).inSeconds;
+  return remaining > 0 ? remaining : 0;
+}
+
+Map<String, Object?> _mapToiletPermitRow(
+  Map<String, Object?> row, {
+  DateTime? now,
+}) {
+  final reference = now ?? DateTime.now();
+  final permitState = _resolveToiletPermitState(
+    row['expires_at'],
+    now: reference,
+  );
+
+  return {
+    'id_karyawan': row['id_karyawan'],
+    'duration_minutes': _normalizeDurationMinutes(row['duration_minutes']),
+    'approved_by': row['approved_by'],
+    'approved_at': row['approved_at'],
+    'expires_at': row['expires_at'],
+    'proof_scanned_by': row['proof_scanned_by'],
+    'proof_scanned_at': row['proof_scanned_at'],
+    'proof_status': row['proof_status']?.toString() ?? 'PENDING',
+    'permit_state': permitState,
+    'remaining_seconds': _remainingPermitSeconds(
+      row['expires_at'],
+      now: reference,
+    ),
+    'created_at': row['created_at'],
+  };
+}
+
+Map<String, Object?> _mapToiletPermitHistoryRow(Map<String, Object?> row) {
+  return {
+    'id': row['id'],
+    'id_karyawan': row['id_karyawan'],
+    'duration_minutes': _normalizeDurationMinutes(row['duration_minutes']),
+    'approved_by': row['approved_by'],
+    'approved_at': row['approved_at'],
+    'expires_at': row['expires_at'],
+    'proof_scanned_by': row['proof_scanned_by'],
+    'proof_scanned_at': row['proof_scanned_at'],
+    'proof_status': row['proof_status']?.toString() ?? 'PENDING',
+    'permit_state':
+        row['permit_state']?.toString() ??
+        _resolveToiletPermitState(row['expires_at']),
+    'tanggal': row['tanggal'],
+    'created_at': row['created_at'],
+  };
+}
+
+void _saveToiletPermitHistory(
+  Database db,
+  Map<String, Object?> permitRow, {
+  DateTime? now,
+  String? permitState,
+}) {
+  final reference = now ?? DateTime.now();
+  db.execute(
+    'INSERT INTO toilet_permit_history(id_karyawan, duration_minutes, approved_by, approved_at, expires_at, proof_scanned_by, proof_scanned_at, proof_status, permit_state, tanggal) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [
+      permitRow['id_karyawan'],
+      _normalizeDurationMinutes(permitRow['duration_minutes']),
+      permitRow['approved_by'],
+      permitRow['approved_at'],
+      permitRow['expires_at'],
+      permitRow['proof_scanned_by'],
+      permitRow['proof_scanned_at'],
+      permitRow['proof_status']?.toString() ?? 'PENDING',
+      permitState ??
+          _resolveToiletPermitState(permitRow['expires_at'], now: reference),
+      _formatDate(reference),
+    ],
+  );
+}
+
+/// Performs the daily reset operation.
+/// Moves all current logs to history and clears the active tables.
 Future<Map<String, dynamic>> performDailyReset(Database db) async {
   try {
     final today = DateTime.now();
-    final tanggal = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    final tanggal = _formatDate(today);
 
     return await _retryDbOperation(() async {
-      // Use transaction for atomic operation
       db.execute('BEGIN TRANSACTION');
 
       try {
-        // Get all current logs
         final currentLogs = db.select('SELECT * FROM log_pulang');
-        int movedCount = 0;
+        var movedCount = 0;
 
-        // Move all current logs to history
         for (final log in currentLogs) {
           db.execute(
             'INSERT INTO log_pulang_history(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, security_scanned_by, pengawas_scanned_at, security_scanned_at, tanggal) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
@@ -92,24 +203,37 @@ Future<Map<String, dynamic>> performDailyReset(Database db) async {
           movedCount++;
         }
 
-        // Clear current logs table
-        db.execute('DELETE FROM log_pulang');
+        final currentPermits = db.select('SELECT * FROM toilet_permit');
+        var movedPermitCount = 0;
+        for (final permit in currentPermits) {
+          _saveToiletPermitHistory(
+            db,
+            Map<String, Object?>.from(permit),
+            now: today,
+          );
+          movedPermitCount++;
+        }
 
-        // Commit transaction
+        db.execute('DELETE FROM log_pulang');
+        db.execute('DELETE FROM toilet_permit');
         db.execute('COMMIT');
 
-        stdout.writeln('[DAILY RESET] Reset completed at ${DateTime.now().toIso8601String()}');
-        stdout.writeln('[DAILY RESET] Moved $movedCount logs to history for date: $tanggal');
+        stdout.writeln(
+          '[DAILY RESET] Reset completed at ${DateTime.now().toIso8601String()}',
+        );
+        stdout.writeln(
+          '[DAILY RESET] Moved $movedCount logs and $movedPermitCount toilet permits to history for date: $tanggal',
+        );
 
         return {
           'success': true,
           'message': 'Daily reset completed',
           'tanggal': tanggal,
           'moved': movedCount,
+          'moved_toilet_permits': movedPermitCount,
           'timestamp': DateTime.now().toIso8601String(),
         };
       } catch (e) {
-        // Rollback on error
         db.execute('ROLLBACK');
         stderr.writeln('[DAILY RESET] Error during reset: $e');
         rethrow;
@@ -125,56 +249,49 @@ Future<Map<String, dynamic>> performDailyReset(Database db) async {
   }
 }
 
-/// Starts the automatic daily reset scheduler
-/// Resets data at 00:00 every day
+/// Starts the automatic daily reset scheduler.
+/// Resets data at 00:00 every day.
 Timer? _dailyResetTimer;
 
 void startDailyResetScheduler(Database db) {
-  // Cancel existing timer if any
   _dailyResetTimer?.cancel();
 
   void scheduleNextReset() {
     final now = DateTime.now();
-
-    // Calculate next midnight (00:00)
-    final nextMidnight = DateTime(
-      now.year,
-      now.month,
-      now.day + 1,
-      0, // hour
-      0, // minute
-      0, // second
-    );
-
+    final nextMidnight = DateTime(now.year, now.month, now.day + 1, 0, 0, 0);
     final duration = nextMidnight.difference(now);
 
-    stdout.writeln('[SCHEDULER] Daily reset scheduled for: ${nextMidnight.toIso8601String()}');
-    stdout.writeln('[SCHEDULER] Time until next reset: ${duration.inHours}h ${duration.inMinutes % 60}m ${duration.inSeconds % 60}s');
+    stdout.writeln(
+      '[SCHEDULER] Daily reset scheduled for: ${nextMidnight.toIso8601String()}',
+    );
+    stdout.writeln(
+      '[SCHEDULER] Time until next reset: ${duration.inHours}h ${duration.inMinutes % 60}m ${duration.inSeconds % 60}s',
+    );
 
-    // Schedule the reset
     _dailyResetTimer = Timer(duration, () async {
       stdout.writeln('[SCHEDULER] Triggering automatic daily reset at 00:00');
 
-      // Perform the reset
       final result = await performDailyReset(db);
 
       if (result['success'] == true) {
-        stdout.writeln('[SCHEDULER] Automatic reset successful: ${result['message']}');
+        stdout.writeln(
+          '[SCHEDULER] Automatic reset successful: ${result['message']}',
+        );
       } else {
-        stderr.writeln('[SCHEDULER] Automatic reset failed: ${result['error']}');
+        stderr.writeln(
+          '[SCHEDULER] Automatic reset failed: ${result['error']}',
+        );
       }
 
-      // Schedule the next reset for tomorrow
       scheduleNextReset();
     });
   }
 
-  // Start the scheduler
   scheduleNextReset();
   stdout.writeln('[SCHEDULER] Daily reset scheduler initialized');
 }
 
-/// Stops the daily reset scheduler
+/// Stops the daily reset scheduler.
 void stopDailyResetScheduler() {
   _dailyResetTimer?.cancel();
   _dailyResetTimer = null;
@@ -185,18 +302,17 @@ Future<Router> buildRouter(Database db) async {
   final r = Router();
 
   Response bad(String msg, {int code = 400}) => Response(
-        code,
-        body: jsonEncode({'error': msg}),
-        headers: {'Content-Type': 'application/json'},
-      );
+    code,
+    body: jsonEncode({'error': msg}),
+    headers: {'Content-Type': 'application/json'},
+  );
 
   Response ok(Map<String, Object?> data) => Response.ok(
-        jsonEncode(data),
-        headers: {'Content-Type': 'application/json'},
-      );
+    jsonEncode(data),
+    headers: {'Content-Type': 'application/json'},
+  );
 
-  // Helper function to save to history
-  void _saveToHistory(
+  void saveToHistory(
     String idKaryawan,
     String statusPengawas,
     String statusSecurity, [
@@ -207,7 +323,7 @@ Future<Router> buildRouter(Database db) async {
   ]) {
     final today = DateTime.now();
     final nowIso = DateTime.now().toIso8601String();
-    final tanggal = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    final tanggal = _formatDate(today);
     db.execute(
       'INSERT INTO log_pulang_history(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, security_scanned_by, pengawas_scanned_at, security_scanned_at, tanggal) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
       [
@@ -218,12 +334,12 @@ Future<Router> buildRouter(Database db) async {
         securityBy,
         pengawasAt ?? nowIso,
         securityAt ?? nowIso,
-        tanggal
+        tanggal,
       ],
     );
   }
 
-  // Login endpoint
+  // Login endpoint.
   r.post('/auth/login', (Request req) async {
     try {
       final body = jsonDecode(await req.readAsString());
@@ -237,24 +353,17 @@ Future<Router> buildRouter(Database db) async {
       if (password == null || password.isEmpty) {
         return bad('Password wajib diisi');
       }
-      if (role == null || role.isEmpty) {
-        return bad('Role wajib diisi');
-      }
-
-      // Validate role
+      if (role == null || role.isEmpty) return bad('Role wajib diisi');
       if (role != 'pengawas' && role != 'security') {
-        return bad('Role tidak valid', code: 400);
+        return bad('Role tidak valid');
       }
 
-      // Query user from database
       final rows = db.select(
         'SELECT * FROM users WHERE username = ? AND password = ? AND role = ?',
         [username, password, role],
       );
 
-      if (rows.isEmpty) {
-        return bad('Username atau password salah', code: 401);
-      }
+      if (rows.isEmpty) return bad('Username atau password salah', code: 401);
 
       final user = rows.first;
       final token = _generateToken(username, role);
@@ -266,7 +375,7 @@ Future<Router> buildRouter(Database db) async {
         'role': user['role'],
       });
     } catch (e) {
-      return bad('Error: ${e.toString()}', code: 500);
+      return bad('Error: $e', code: 500);
     }
   });
 
@@ -276,11 +385,9 @@ Future<Router> buildRouter(Database db) async {
     final username = body['username']?.toString().trim();
     if (id == null || id.isEmpty) return bad('id_karyawan wajib');
 
-    // Extract only PIN, Nama, and Bagian from barcode string
     id = _extractBarcodeInfo(id);
 
     try {
-      // Use retry logic for database write operation
       await _retryDbOperation(() async {
         final nowIso = DateTime.now().toIso8601String();
         db.execute(
@@ -292,11 +399,13 @@ Future<Router> buildRouter(Database db) async {
       });
 
       final nowIso = DateTime.now().toIso8601String();
-      _saveToHistory(id, 'ACC', 'PENDING', username, null, nowIso, null);
-      final row = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [id]).first;
-      return ok(row);
+      saveToHistory(id, 'ACC', 'PENDING', username, null, nowIso, null);
+      final row = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
+        id,
+      ]).first;
+      return ok(Map<String, Object?>.from(row));
     } catch (e) {
-      return bad('Error: ${e.toString()}', code: 500);
+      return bad('Error: $e', code: 500);
     }
   });
 
@@ -306,16 +415,17 @@ Future<Router> buildRouter(Database db) async {
     final username = body['username']?.toString().trim();
     if (id == null || id.isEmpty) return bad('id_karyawan wajib');
 
-    // Extract only PIN, Nama, and Bagian from barcode string
     id = _extractBarcodeInfo(id);
 
     try {
-      final rows = db.select('SELECT status_pengawas, status_security FROM log_pulang WHERE id_karyawan=?', [id]);
+      final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
+        id,
+      ]);
       if (rows.isEmpty) return bad('Belum ada ACC pengawas');
-      final row = rows.first;
+
+      final row = Map<String, Object?>.from(rows.first);
       if (row['status_pengawas'] != 'ACC') return bad('Pengawas belum ACC');
 
-      // Use retry logic for database write operation
       final nowIso = DateTime.now().toIso8601String();
       await _retryDbOperation(() async {
         db.execute(
@@ -325,45 +435,208 @@ Future<Router> buildRouter(Database db) async {
         return null;
       });
 
-      _saveToHistory(id, 'ACC', 'ACC', row['pengawas_scanned_by']?.toString(), username, row['pengawas_scanned_at']?.toString(), nowIso);
-      final updated = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [id]).first;
-      return ok(updated);
+      saveToHistory(
+        id,
+        'ACC',
+        'ACC',
+        row['pengawas_scanned_by']?.toString(),
+        username,
+        row['pengawas_scanned_at']?.toString(),
+        nowIso,
+      );
+      final updated = db.select(
+        'SELECT * FROM log_pulang WHERE id_karyawan=?',
+        [id],
+      ).first;
+      return ok(Map<String, Object?>.from(updated));
     } catch (e) {
-      return bad('Error: ${e.toString()}', code: 500);
+      return bad('Error: $e', code: 500);
     }
+  });
+
+  r.post('/toilet-permit/approve', (Request req) async {
+    try {
+      final body = jsonDecode(await req.readAsString());
+      var id = body['id_karyawan']?.toString().trim();
+      final username = body['username']?.toString().trim();
+      final durationMinutes = _normalizeDurationMinutes(
+        body['duration_minutes'],
+      );
+
+      if (id == null || id.isEmpty) return bad('id_karyawan wajib');
+      if (username == null || username.isEmpty) return bad('username wajib');
+
+      id = _extractBarcodeInfo(id);
+      final now = DateTime.now();
+      final nowIso = now.toIso8601String();
+      final expiresAtIso = now
+          .add(Duration(minutes: durationMinutes))
+          .toIso8601String();
+      final existing = db.select(
+        'SELECT id_karyawan FROM toilet_permit WHERE id_karyawan=?',
+        [id],
+      );
+
+      await _retryDbOperation(() async {
+        db.execute(
+          'INSERT INTO toilet_permit(id_karyawan, duration_minutes, approved_by, approved_at, expires_at, proof_scanned_by, proof_scanned_at, proof_status) VALUES(?, ?, ?, ?, ?, NULL, NULL, "PENDING") '
+          'ON CONFLICT(id_karyawan) DO UPDATE SET duration_minutes=?, approved_by=?, approved_at=?, expires_at=?, proof_scanned_by=NULL, proof_scanned_at=NULL, proof_status="PENDING";',
+          [
+            id,
+            durationMinutes,
+            username,
+            nowIso,
+            expiresAtIso,
+            durationMinutes,
+            username,
+            nowIso,
+            expiresAtIso,
+          ],
+        );
+        return null;
+      });
+
+      final row = Map<String, Object?>.from(
+        db.select('SELECT * FROM toilet_permit WHERE id_karyawan=?', [
+          id,
+        ]).first,
+      );
+      _saveToiletPermitHistory(db, row, now: now, permitState: 'ACTIVE');
+
+      return ok({
+        ..._mapToiletPermitRow(row, now: now),
+        'message': existing.isEmpty
+            ? 'Izin toilet disetujui'
+            : 'Izin toilet diperbarui',
+      });
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
+
+  r.post('/toilet-permit/proof-scan', (Request req) async {
+    try {
+      final body = jsonDecode(await req.readAsString());
+      var id = body['id_karyawan']?.toString().trim();
+      final username = body['username']?.toString().trim();
+
+      if (id == null || id.isEmpty) return bad('id_karyawan wajib');
+      if (username == null || username.isEmpty) return bad('username wajib');
+
+      id = _extractBarcodeInfo(id);
+
+      final rows = db.select(
+        'SELECT * FROM toilet_permit WHERE id_karyawan=?',
+        [id],
+      );
+      if (rows.isEmpty) return bad('Belum ada izin toilet dari pengawas');
+
+      final now = DateTime.now();
+      final permit = Map<String, Object?>.from(rows.first);
+      final permitState = _resolveToiletPermitState(
+        permit['expires_at'],
+        now: now,
+      );
+      if (permitState == 'EXPIRED') {
+        return bad('Izin toilet sudah habis');
+      }
+
+      final existingProof = permit['proof_scanned_at']?.toString().trim() ?? '';
+      if (existingProof.isNotEmpty) {
+        return ok({
+          ..._mapToiletPermitRow(permit, now: now),
+          'message': 'Bukti scan sudah tercatat',
+        });
+      }
+
+      final nowIso = now.toIso8601String();
+      await _retryDbOperation(() async {
+        db.execute(
+          'UPDATE toilet_permit SET proof_scanned_by=?, proof_scanned_at=?, proof_status="SCANNED" WHERE id_karyawan=?',
+          [username, nowIso, id],
+        );
+        return null;
+      });
+
+      final updated = Map<String, Object?>.from(
+        db.select('SELECT * FROM toilet_permit WHERE id_karyawan=?', [
+          id,
+        ]).first,
+      );
+      _saveToiletPermitHistory(db, updated, now: now, permitState: 'ACTIVE');
+
+      return ok({
+        ..._mapToiletPermitRow(updated, now: now),
+        'message': 'Izin toilet tervalidasi',
+      });
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
+
+  r.get('/toilet-permit/status/<id>', (Request req, String id) {
+    final decodedId = _extractBarcodeInfo(Uri.decodeComponent(id));
+    final rows = db.select('SELECT * FROM toilet_permit WHERE id_karyawan=?', [
+      decodedId,
+    ]);
+    if (rows.isEmpty) {
+      return Response.notFound(
+        jsonEncode({'error': 'not found'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+    return ok(_mapToiletPermitRow(Map<String, Object?>.from(rows.first)));
   });
 
   r.get('/status/<id>', (Request req, String id) {
     final decodedId = Uri.decodeComponent(id);
-    final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [decodedId]);
+    final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
+      decodedId,
+    ]);
     if (rows.isEmpty) {
-      return Response.notFound(jsonEncode({'error': 'not found'}),
-          headers: {'Content-Type': 'application/json'});
+      return Response.notFound(
+        jsonEncode({'error': 'not found'}),
+        headers: {'Content-Type': 'application/json'},
+      );
     }
-    return ok(rows.first);
+    return ok(Map<String, Object?>.from(rows.first));
   });
 
   Response logsHandler(Request req) {
     final rows = db.select('SELECT * FROM log_pulang ORDER BY rowid DESC');
     final list = rows
-        .map((r) => {
-              'id_karyawan': r['id_karyawan'],
-              'status_pengawas': r['status_pengawas'],
-              'status_security': r['status_security'],
-              'pengawas_scanned_by': r['pengawas_scanned_by'],
-              'security_scanned_by': r['security_scanned_by'],
-              'pengawas_scanned_at': r['pengawas_scanned_at'],
-              'security_scanned_at': r['security_scanned_at'],
-              'created_at': r['created_at'],
-            })
+        .map(
+          (r) => {
+            'id_karyawan': r['id_karyawan'],
+            'status_pengawas': r['status_pengawas'],
+            'status_security': r['status_security'],
+            'pengawas_scanned_by': r['pengawas_scanned_by'],
+            'security_scanned_by': r['security_scanned_by'],
+            'pengawas_scanned_at': r['pengawas_scanned_at'],
+            'security_scanned_at': r['security_scanned_at'],
+            'created_at': r['created_at'],
+          },
+        )
         .toList();
     return ok({'logs': list});
   }
 
-  r.get('/logs', logsHandler);
-  r.get('/logs/', logsHandler); // handle trailing slash
+  Response toiletPermitHandler(Request req) {
+    final rows = db.select(
+      'SELECT * FROM toilet_permit ORDER BY approved_at DESC',
+    );
+    final list = rows
+        .map((r) => _mapToiletPermitRow(Map<String, Object?>.from(r)))
+        .toList();
+    return ok({'permits': list});
+  }
 
-  // Get logs by date
+  r.get('/logs', logsHandler);
+  r.get('/logs/', logsHandler);
+  r.get('/toilet-permits', toiletPermitHandler);
+  r.get('/toilet-permits/', toiletPermitHandler);
+
+  // Get logs by date.
   r.get('/logs-history/<tanggal>', (Request req, String tanggal) {
     try {
       final rows = db.select(
@@ -371,17 +644,19 @@ Future<Router> buildRouter(Database db) async {
         [tanggal],
       );
       final list = rows
-          .map((r) => {
-                'id_karyawan': r['id_karyawan'],
-                'status_pengawas': r['status_pengawas'],
-                'status_security': r['status_security'],
-                'pengawas_scanned_by': r['pengawas_scanned_by'],
-                'security_scanned_by': r['security_scanned_by'],
-                'pengawas_scanned_at': r['pengawas_scanned_at'],
-                'security_scanned_at': r['security_scanned_at'],
-                'tanggal': r['tanggal'],
-                'created_at': r['created_at'],
-              })
+          .map(
+            (r) => {
+              'id_karyawan': r['id_karyawan'],
+              'status_pengawas': r['status_pengawas'],
+              'status_security': r['status_security'],
+              'pengawas_scanned_by': r['pengawas_scanned_by'],
+              'security_scanned_by': r['security_scanned_by'],
+              'pengawas_scanned_at': r['pengawas_scanned_at'],
+              'security_scanned_at': r['security_scanned_at'],
+              'tanggal': r['tanggal'],
+              'created_at': r['created_at'],
+            },
+          )
           .toList();
       return ok({'logs': list, 'tanggal': tanggal, 'total': list.length});
     } catch (e) {
@@ -389,7 +664,22 @@ Future<Router> buildRouter(Database db) async {
     }
   });
 
-  // Get all unique dates in history
+  r.get('/toilet-permits-history/<tanggal>', (Request req, String tanggal) {
+    try {
+      final rows = db.select(
+        'SELECT * FROM toilet_permit_history WHERE tanggal = ? ORDER BY rowid DESC',
+        [tanggal],
+      );
+      final list = rows
+          .map((r) => _mapToiletPermitHistoryRow(Map<String, Object?>.from(r)))
+          .toList();
+      return ok({'permits': list, 'tanggal': tanggal, 'total': list.length});
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
+
+  // Get all unique dates in history.
   r.get('/dates-history', (Request req) {
     try {
       final rows = db.select(
@@ -402,28 +692,26 @@ Future<Router> buildRouter(Database db) async {
     }
   });
 
-  // Daily reset endpoint - clears current day logs but keeps history
+  // Daily reset endpoint - clears current day logs but keeps history.
   r.post('/daily-reset', (Request req) async {
     try {
       final result = await performDailyReset(db);
-
       if (result['success'] == true) {
         return ok({
           'message': result['message'],
           'tanggal': result['tanggal'],
           'cleared': result['moved'],
+          'cleared_toilet_permits': result['moved_toilet_permits'],
           'timestamp': result['timestamp'],
         });
-      } else {
-        return bad(result['error'].toString(), code: 500);
       }
+      return bad(result['error'].toString(), code: 500);
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
   });
 
-  // CRUD Log Endpoints
-  // CREATE log
+  // CRUD Log Endpoints.
   r.post('/logs', (Request req) async {
     try {
       final body = jsonDecode(await req.readAsString());
@@ -432,8 +720,6 @@ Future<Router> buildRouter(Database db) async {
       final security = body['status_security']?.toString().trim() ?? 'PENDING';
 
       if (id == null || id.isEmpty) return bad('id_karyawan wajib');
-
-      // Extract only PIN, Nama, and Bagian from barcode string
       id = _extractBarcodeInfo(id);
 
       db.execute(
@@ -441,26 +727,26 @@ Future<Router> buildRouter(Database db) async {
         'ON CONFLICT(id_karyawan) DO UPDATE SET status_pengawas=?, status_security=?',
         [id, pengawas, security, pengawas, security],
       );
-      _saveToHistory(id, pengawas, security);
+      saveToHistory(id, pengawas, security);
 
-      final row = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [id]).first;
-      return ok(row);
+      final row = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
+        id,
+      ]).first;
+      return ok(Map<String, Object?>.from(row));
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
   });
 
-  // READ single log
   r.get('/logs/<id>', (Request req, String id) {
     final decodedId = Uri.decodeComponent(id);
-    final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [decodedId]);
-    if (rows.isEmpty) {
-      return bad('Log tidak ditemukan', code: 404);
-    }
-    return ok(rows.first);
+    final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
+      decodedId,
+    ]);
+    if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
+    return ok(Map<String, Object?>.from(rows.first));
   });
 
-  // UPDATE log
   r.put('/logs/<id>', (Request req, String id) async {
     try {
       final decodedId = Uri.decodeComponent(id);
@@ -472,26 +758,25 @@ Future<Router> buildRouter(Database db) async {
         'UPDATE log_pulang SET status_pengawas=?, status_security=? WHERE id_karyawan=?',
         [pengawas, security, decodedId],
       );
-      _saveToHistory(decodedId, pengawas, security);
+      saveToHistory(decodedId, pengawas, security);
 
-      final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [decodedId]);
-      if (rows.isEmpty) {
-        return bad('Log tidak ditemukan', code: 404);
-      }
-      return ok(rows.first);
+      final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
+        decodedId,
+      ]);
+      if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
+      return ok(Map<String, Object?>.from(rows.first));
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
   });
 
-  // DELETE log
   r.delete('/logs/<id>', (Request req, String id) async {
     try {
       final decodedId = Uri.decodeComponent(id);
-      final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [decodedId]);
-      if (rows.isEmpty) {
-        return bad('Log tidak ditemukan', code: 404);
-      }
+      final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
+        decodedId,
+      ]);
+      if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
 
       db.execute('DELETE FROM log_pulang WHERE id_karyawan=?', [decodedId]);
       return ok({'message': 'Log berhasil dihapus', 'id_karyawan': decodedId});
@@ -500,8 +785,7 @@ Future<Router> buildRouter(Database db) async {
     }
   });
 
-  // Admin Endpoints
-  // Admin login
+  // Admin Endpoints.
   r.post('/admin/login', (Request req) async {
     try {
       final body = jsonDecode(await req.readAsString());
@@ -515,7 +799,6 @@ Future<Router> buildRouter(Database db) async {
         return bad('Password wajib diisi');
       }
 
-      // Simple admin authentication
       if (username == 'admin' && password == 'admin123') {
         final token = 'admin_token_${DateTime.now().millisecondsSinceEpoch}';
         return ok({
@@ -532,7 +815,6 @@ Future<Router> buildRouter(Database db) async {
     }
   });
 
-  // Get all users
   r.get('/admin/users', (Request req) {
     try {
       final rows = db.select(
@@ -544,7 +826,6 @@ Future<Router> buildRouter(Database db) async {
     }
   });
 
-  // Create new user
   r.post('/admin/users', (Request req) async {
     try {
       final body = jsonDecode(await req.readAsString());
@@ -558,12 +839,9 @@ Future<Router> buildRouter(Database db) async {
       if (password == null || password.isEmpty) {
         return bad('Password wajib diisi');
       }
-      if (role == null || role.isEmpty) {
-        return bad('Role wajib diisi');
-      }
-
+      if (role == null || role.isEmpty) return bad('Role wajib diisi');
       if (role != 'pengawas' && role != 'security') {
-        return bad('Role hanya bisa pengawas atau security', code: 400);
+        return bad('Role hanya bisa pengawas atau security');
       }
 
       db.execute(
@@ -575,16 +853,15 @@ Future<Router> buildRouter(Database db) async {
         'SELECT id, username, role, created_at FROM users WHERE username=?',
         [username],
       );
-      return ok(rows.first);
+      return ok(Map<String, Object?>.from(rows.first));
     } catch (e) {
       if (e.toString().contains('UNIQUE constraint failed')) {
-        return bad('Username sudah terdaftar', code: 400);
+        return bad('Username sudah terdaftar');
       }
       return bad('Error: $e', code: 500);
     }
   });
 
-  // Update user
   r.put('/admin/users/<id>', (Request req, String id) async {
     try {
       final body = jsonDecode(await req.readAsString());
@@ -594,41 +871,33 @@ Future<Router> buildRouter(Database db) async {
       if (password == null || password.isEmpty) {
         return bad('Password wajib diisi');
       }
-      if (role == null || role.isEmpty) {
-        return bad('Role wajib diisi');
-      }
-
+      if (role == null || role.isEmpty) return bad('Role wajib diisi');
       if (role != 'pengawas' && role != 'security') {
-        return bad('Role hanya bisa pengawas atau security', code: 400);
+        return bad('Role hanya bisa pengawas atau security');
       }
 
-      db.execute(
-        'UPDATE users SET password=?, role=? WHERE id=?',
-        [password, role, id],
-      );
+      db.execute('UPDATE users SET password=?, role=? WHERE id=?', [
+        password,
+        role,
+        id,
+      ]);
 
       final rows = db.select(
         'SELECT id, username, role, created_at FROM users WHERE id=?',
         [id],
       );
 
-      if (rows.isEmpty) {
-        return bad('User tidak ditemukan', code: 404);
-      }
-
-      return ok(rows.first);
+      if (rows.isEmpty) return bad('User tidak ditemukan', code: 404);
+      return ok(Map<String, Object?>.from(rows.first));
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
   });
 
-  // Delete user
   r.delete('/admin/users/<id>', (Request req, String id) async {
     try {
       final rows = db.select('SELECT username FROM users WHERE id=?', [id]);
-      if (rows.isEmpty) {
-        return bad('User tidak ditemukan', code: 404);
-      }
+      if (rows.isEmpty) return bad('User tidak ditemukan', code: 404);
 
       final username = rows.first['username'];
       db.execute('DELETE FROM users WHERE id=?', [id]);
@@ -643,14 +912,24 @@ Future<Router> buildRouter(Database db) async {
     }
   });
 
-  // Clear all logs but keep history
   r.post('/admin/clear-logs', (Request req) async {
     try {
-      final deletedCount = db.select('SELECT COUNT(*) as count FROM log_pulang').first['count'] as int;
+      final deletedCount =
+          db.select('SELECT COUNT(*) as count FROM log_pulang').first['count']
+              as int;
+      final deletedPermitCount =
+          db
+                  .select('SELECT COUNT(*) as count FROM toilet_permit')
+                  .first['count']
+              as int;
+
       db.execute('DELETE FROM log_pulang');
+      db.execute('DELETE FROM toilet_permit');
+
       return ok({
-        'message': 'Semua log pulang berhasil dihapus',
+        'message': 'Semua log aktif berhasil dihapus',
         'deleted_count': deletedCount,
+        'deleted_toilet_permits': deletedPermitCount,
         'history_preserved': true,
       });
     } catch (e) {
@@ -658,19 +937,38 @@ Future<Router> buildRouter(Database db) async {
     }
   });
 
-  // Clear all logs and history
   r.post('/admin/clear-all-data', (Request req) async {
     try {
-      final logCount = db.select('SELECT COUNT(*) as count FROM log_pulang').first['count'] as int;
-      final historyCount = db.select('SELECT COUNT(*) as count FROM log_pulang_history').first['count'] as int;
+      final logCount =
+          db.select('SELECT COUNT(*) as count FROM log_pulang').first['count']
+              as int;
+      final historyCount =
+          db
+                  .select('SELECT COUNT(*) as count FROM log_pulang_history')
+                  .first['count']
+              as int;
+      final permitCount =
+          db
+                  .select('SELECT COUNT(*) as count FROM toilet_permit')
+                  .first['count']
+              as int;
+      final permitHistoryCount =
+          db
+                  .select('SELECT COUNT(*) as count FROM toilet_permit_history')
+                  .first['count']
+              as int;
 
       db.execute('DELETE FROM log_pulang');
       db.execute('DELETE FROM log_pulang_history');
+      db.execute('DELETE FROM toilet_permit');
+      db.execute('DELETE FROM toilet_permit_history');
 
       return ok({
         'message': 'Semua log dan history berhasil dihapus',
         'deleted_logs': logCount,
         'deleted_history': historyCount,
+        'deleted_toilet_permits': permitCount,
+        'deleted_toilet_permit_history': permitHistoryCount,
       });
     } catch (e) {
       return bad('Error: $e', code: 500);

@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../../core/services/auth_service.dart';
 import '../../core/theme/app_colors.dart';
+import '../toilet/toilet_scanner_page.dart';
+import '../toilet/toilet_status_page.dart';
 import 'scanner_page.dart';
 import 'status_page.dart';
 
-/// Container widget for the Verifikasi tab.
-/// Provides sub-tabs: Scanner and Status.
+/// Container widget for verification and toilet-permit flows.
 class VerificationTab extends StatefulWidget {
   const VerificationTab({super.key});
 
@@ -21,7 +22,7 @@ class _VerificationTabState extends State<VerificationTab>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -45,22 +46,28 @@ class _VerificationTabState extends State<VerificationTab>
           ),
           child: TabBar(
             controller: _tabController,
+            isScrollable: true,
             labelColor: AppColors.primary,
             unselectedLabelColor: AppColors.textSecondary,
             indicatorColor: AppColors.primary,
             indicatorSize: TabBarIndicatorSize.tab,
             dividerHeight: 0,
-            labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-            unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+            labelStyle: const TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+            unselectedLabelStyle: const TextStyle(
+              fontWeight: FontWeight.w500,
+              fontSize: 13,
+            ),
             tabs: const [
               Tab(
                 icon: Icon(Icons.qr_code_scanner, size: 20),
-                text: 'Scanner',
+                text: 'Pulang Scan',
               ),
-              Tab(
-                icon: Icon(Icons.list_alt, size: 20),
-                text: 'Status',
-              ),
+              Tab(icon: Icon(Icons.list_alt, size: 20), text: 'Pulang Status'),
+              Tab(icon: Icon(Icons.wc, size: 20), text: 'Toilet Scan'),
+              Tab(icon: Icon(Icons.timer, size: 20), text: 'Toilet Status'),
             ],
           ),
         ),
@@ -70,6 +77,8 @@ class _VerificationTabState extends State<VerificationTab>
             children: [
               ScannerTab(isPengawas: isPengawas),
               const StatusTab(),
+              ToiletScannerTab(isPengawas: isPengawas),
+              const ToiletStatusTab(),
             ],
           ),
         ),

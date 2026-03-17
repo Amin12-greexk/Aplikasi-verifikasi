@@ -10,6 +10,7 @@ void main() {
       expect(p.baseUrl, 'https://veriv.tunasestaindonesia.com');
       expect(p.isDefault, true);
       expect(p.enabledModules, contains('verification'));
+      expect(p.enabledModules, contains('toilet'));
       expect(p.enabledModules, contains('history'));
     });
 
@@ -61,7 +62,10 @@ void main() {
         enabledModules: ['verification'],
       );
 
-      final updated = original.copyWith(name: 'Updated', baseUrl: 'https://new.com');
+      final updated = original.copyWith(
+        name: 'Updated',
+        baseUrl: 'https://new.com',
+      );
 
       expect(updated.id, 'orig');
       expect(updated.name, 'Updated');
@@ -79,6 +83,7 @@ void main() {
 
       expect(profile.isModuleEnabled('verification'), true);
       expect(profile.isModuleEnabled('history'), true);
+      expect(profile.isModuleEnabled('toilet'), false);
       expect(profile.isModuleEnabled('attendance'), false);
     });
 
@@ -95,7 +100,7 @@ void main() {
       final json = {'id': 'x', 'name': 'X', 'baseUrl': 'https://x.com'};
       final profile = ServerProfile.fromJson(json);
 
-      expect(profile.enabledModules, ['verification', 'history']);
+      expect(profile.enabledModules, ['verification', 'toilet', 'history']);
       expect(profile.isDefault, false);
     });
   });

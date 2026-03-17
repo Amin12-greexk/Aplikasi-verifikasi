@@ -29,8 +29,19 @@ class _HistoryPageState extends State<HistoryPage> {
 
   String _formatDisplayDate(DateTime date) {
     const months = [
-      '', 'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
-      'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des',
+      '',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'Mei',
+      'Jun',
+      'Jul',
+      'Agu',
+      'Sep',
+      'Okt',
+      'Nov',
+      'Des',
     ];
     return '${date.day} ${months[date.month]} ${date.year}';
   }
@@ -42,6 +53,8 @@ class _HistoryPageState extends State<HistoryPage> {
       List<Map<String, dynamic>> data;
       if (_selectedModule == 'verification') {
         data = await HistoryService.fetchVerificationHistory(dateStr);
+      } else if (_selectedModule == 'toilet') {
+        data = await HistoryService.fetchToiletHistory(dateStr);
       } else {
         data = await HistoryService.fetchAttendanceHistory(dateStr);
       }
@@ -97,7 +110,9 @@ class _HistoryPageState extends State<HistoryPage> {
     try {
       final parts = barcode.split('|').map((p) => p.trim()).toList();
       for (final part in parts) {
-        if (part.startsWith('$key:')) return part.substring(key.length + 1).trim();
+        if (part.startsWith('$key:')) {
+          return part.substring(key.length + 1).trim();
+        }
       }
     } catch (_) {}
     return '';
@@ -133,14 +148,21 @@ class _HistoryPageState extends State<HistoryPage> {
                 onTap: _pickDate,
                 borderRadius: BorderRadius.circular(10),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.background,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.calendar_today, size: 18, color: AppColors.primary),
+                      const Icon(
+                        Icons.calendar_today,
+                        size: 18,
+                        color: AppColors.primary,
+                      ),
                       const SizedBox(width: 10),
                       Text(
                         _formatDisplayDate(_selectedDate),
@@ -151,17 +173,22 @@ class _HistoryPageState extends State<HistoryPage> {
                         ),
                       ),
                       const Spacer(),
-                      const Icon(Icons.arrow_drop_down, color: AppColors.textSecondary),
+                      const Icon(
+                        Icons.arrow_drop_down,
+                        color: AppColors.textSecondary,
+                      ),
                     ],
                   ),
                 ),
               ),
               const SizedBox(height: 10),
               // Module filter
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   _filterChip('Verifikasi', 'verification'),
-                  const SizedBox(width: 8),
+                  _filterChip('Izin Toilet', 'toilet'),
                   _filterChip('Absensi', 'attendance'),
                 ],
               ),
@@ -175,23 +202,28 @@ class _HistoryPageState extends State<HistoryPage> {
         Expanded(
           child: _isLoading
               ? const Center(
-                  child: CircularProgressIndicator(color: AppColors.primary, strokeWidth: 2.5),
+                  child: CircularProgressIndicator(
+                    color: AppColors.primary,
+                    strokeWidth: 2.5,
+                  ),
                 )
               : _selectedModule == 'attendance'
-                  ? _buildAttendancePlaceholder()
-                  : _records.isEmpty
-                      ? _buildEmptyState()
-                      : RefreshIndicator(
-                          onRefresh: _loadHistory,
-                          color: AppColors.primary,
-                          child: ListView.builder(
-                            itemCount: _records.length,
-                            itemBuilder: (context, index) {
-                              final log = _records[index];
-                              return _buildVerificationItem(log);
-                            },
-                          ),
-                        ),
+              ? _buildAttendancePlaceholder()
+              : _records.isEmpty
+              ? _buildEmptyState()
+              : RefreshIndicator(
+                  onRefresh: _loadHistory,
+                  color: AppColors.primary,
+                  child: ListView.builder(
+                    itemCount: _records.length,
+                    itemBuilder: (context, index) {
+                      final log = _records[index];
+                      return _selectedModule == 'verification'
+                          ? _buildVerificationItem(log)
+                          : _buildToiletItem(log);
+                    },
+                  ),
+                ),
         ),
       ],
     );
@@ -267,6 +299,121 @@ class _HistoryPageState extends State<HistoryPage> {
     );
   }
 
+  Widget _buildToiletItem(Map<String, dynamic> permit) {
+    final id = permit['id_karyawan'] ?? '';
+    final info = _extractEmployeeInfo(id);
+    final proofStatus =
+        permit['proof_status']?.toString().toLowerCase() ?? 'pending';
+    final permitState =
+        permit['permit_state']?.toString().toLowerCase() ?? 'active';
+    final duration = permit['duration_minutes']?.toString() ?? '-';
+    final approvedAt = _formatTimeLabel(permit['approved_at']?.toString());
+    final expiresAt = _formatTimeLabel(permit['expires_at']?.toString());
+    final proofAt = _formatTimeLabel(permit['proof_scanned_at']?.toString());
+
+    Color statusColor;
+    String statusLabel;
+    if (permitState == 'expired') {
+      statusColor = AppColors.error;
+      statusLabel = 'Waktu Habis';
+    } else if (proofStatus == 'scanned') {
+      statusColor = AppColors.success;
+      statusLabel = 'Tervalidasi';
+    } else {
+      statusColor = AppColors.info;
+      statusLabel = 'Menunggu Proof';
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  info,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: statusColor.withAlpha(20),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  statusLabel,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: statusColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Icon(Icons.timer, size: 14, color: statusColor),
+              const SizedBox(width: 4),
+              Text(
+                '$duration menit',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: statusColor,
+                ),
+              ),
+              const SizedBox(width: 14),
+              const Icon(Icons.schedule, size: 14, color: AppColors.textHint),
+              const SizedBox(width: 4),
+              Text(
+                'Batas: $expiresAt',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Pengawas: ${permit['approved_by'] ?? '-'} ($approvedAt)',
+            style: const TextStyle(
+              fontSize: 11,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            proofStatus == 'scanned'
+                ? 'Security: ${permit['proof_scanned_by'] ?? '-'} ($proofAt)'
+                : 'Security: Belum proof scan',
+            style: TextStyle(
+              fontSize: 11,
+              color: proofStatus == 'scanned'
+                  ? AppColors.success
+                  : AppColors.textHint,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildVerificationItem(Map<String, dynamic> log) {
     final id = log['id_karyawan'] ?? '';
     final info = _extractEmployeeInfo(id);
@@ -334,28 +481,36 @@ class _HistoryPageState extends State<HistoryPage> {
               Icon(
                 statusP == 'approved' ? Icons.check_circle : Icons.pending,
                 size: 14,
-                color: statusP == 'approved' ? AppColors.success : AppColors.textHint,
+                color: statusP == 'approved'
+                    ? AppColors.success
+                    : AppColors.textHint,
               ),
               const SizedBox(width: 4),
               Text(
                 'Pengawas: $timeP',
                 style: TextStyle(
                   fontSize: 11,
-                  color: statusP == 'approved' ? AppColors.success : AppColors.textHint,
+                  color: statusP == 'approved'
+                      ? AppColors.success
+                      : AppColors.textHint,
                 ),
               ),
               const SizedBox(width: 16),
               Icon(
                 statusS == 'approved' ? Icons.check_circle : Icons.pending,
                 size: 14,
-                color: statusS == 'approved' ? AppColors.success : AppColors.textHint,
+                color: statusS == 'approved'
+                    ? AppColors.success
+                    : AppColors.textHint,
               ),
               const SizedBox(width: 4),
               Text(
                 'Security: $timeS',
                 style: TextStyle(
                   fontSize: 11,
-                  color: statusS == 'approved' ? AppColors.success : AppColors.textHint,
+                  color: statusS == 'approved'
+                      ? AppColors.success
+                      : AppColors.textHint,
                 ),
               ),
             ],

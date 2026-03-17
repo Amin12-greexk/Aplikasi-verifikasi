@@ -55,6 +55,42 @@ Future<Database> initDb(String path) async {
     CREATE INDEX IF NOT EXISTS idx_tanggal ON log_pulang_history(tanggal);
   ''');
 
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS toilet_permit (
+      id_karyawan TEXT PRIMARY KEY,
+      duration_minutes INTEGER NOT NULL DEFAULT 10,
+      approved_by TEXT,
+      approved_at DATETIME,
+      expires_at DATETIME,
+      proof_scanned_by TEXT,
+      proof_scanned_at DATETIME,
+      proof_status TEXT NOT NULL DEFAULT 'PENDING',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  ''');
+
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS toilet_permit_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_karyawan TEXT NOT NULL,
+      duration_minutes INTEGER NOT NULL,
+      approved_by TEXT,
+      approved_at DATETIME,
+      expires_at DATETIME,
+      proof_scanned_by TEXT,
+      proof_scanned_at DATETIME,
+      proof_status TEXT NOT NULL,
+      permit_state TEXT NOT NULL,
+      tanggal DATE NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  ''');
+
+  db.execute('''
+    CREATE INDEX IF NOT EXISTS idx_toilet_permit_history_tanggal
+    ON toilet_permit_history(tanggal);
+  ''');
+
   // Migration: Add columns if they do not exist.
   try {
     db.execute('ALTER TABLE log_pulang ADD COLUMN pengawas_scanned_by TEXT;');
@@ -100,12 +136,109 @@ Future<Database> initDb(String path) async {
     );
   } catch (_) {}
 
+  try {
+    db.execute(
+      'ALTER TABLE toilet_permit ADD COLUMN duration_minutes INTEGER;',
+    );
+  } catch (_) {}
+
+  try {
+    db.execute('ALTER TABLE toilet_permit ADD COLUMN approved_by TEXT;');
+  } catch (_) {}
+
+  try {
+    db.execute('ALTER TABLE toilet_permit ADD COLUMN approved_at DATETIME;');
+  } catch (_) {}
+
+  try {
+    db.execute('ALTER TABLE toilet_permit ADD COLUMN expires_at DATETIME;');
+  } catch (_) {}
+
+  try {
+    db.execute('ALTER TABLE toilet_permit ADD COLUMN proof_scanned_by TEXT;');
+  } catch (_) {}
+
+  try {
+    db.execute(
+      'ALTER TABLE toilet_permit ADD COLUMN proof_scanned_at DATETIME;',
+    );
+  } catch (_) {}
+
+  try {
+    db.execute(
+      'ALTER TABLE toilet_permit ADD COLUMN proof_status TEXT DEFAULT "PENDING";',
+    );
+  } catch (_) {}
+
+  try {
+    db.execute(
+      'ALTER TABLE toilet_permit_history ADD COLUMN duration_minutes INTEGER;',
+    );
+  } catch (_) {}
+
+  try {
+    db.execute(
+      'ALTER TABLE toilet_permit_history ADD COLUMN approved_by TEXT;',
+    );
+  } catch (_) {}
+
+  try {
+    db.execute(
+      'ALTER TABLE toilet_permit_history ADD COLUMN approved_at DATETIME;',
+    );
+  } catch (_) {}
+
+  try {
+    db.execute(
+      'ALTER TABLE toilet_permit_history ADD COLUMN expires_at DATETIME;',
+    );
+  } catch (_) {}
+
+  try {
+    db.execute(
+      'ALTER TABLE toilet_permit_history ADD COLUMN proof_scanned_by TEXT;',
+    );
+  } catch (_) {}
+
+  try {
+    db.execute(
+      'ALTER TABLE toilet_permit_history ADD COLUMN proof_scanned_at DATETIME;',
+    );
+  } catch (_) {}
+
+  try {
+    db.execute(
+      'ALTER TABLE toilet_permit_history ADD COLUMN proof_status TEXT DEFAULT "PENDING";',
+    );
+  } catch (_) {}
+
+  try {
+    db.execute(
+      'ALTER TABLE toilet_permit_history ADD COLUMN permit_state TEXT DEFAULT "ACTIVE";',
+    );
+  } catch (_) {}
+
   // Backfill timestamps for existing data.
   db.execute(
     'UPDATE log_pulang SET pengawas_scanned_at = COALESCE(pengawas_scanned_at, created_at) WHERE status_pengawas = "ACC";',
   );
   db.execute(
     'UPDATE log_pulang SET security_scanned_at = COALESCE(security_scanned_at, created_at) WHERE status_security = "ACC";',
+  );
+  db.execute(
+    'UPDATE toilet_permit SET duration_minutes = COALESCE(duration_minutes, 10);',
+  );
+  db.execute(
+    'UPDATE toilet_permit SET proof_status = COALESCE(proof_status, "PENDING");',
+  );
+  db.execute(
+    'UPDATE toilet_permit_history SET duration_minutes = COALESCE(duration_minutes, 10);',
+  );
+  db.execute(
+    'UPDATE toilet_permit_history SET proof_status = COALESCE(proof_status, "PENDING");',
+  );
+  db.execute(
+    'UPDATE toilet_permit_history SET permit_state = COALESCE(permit_state, "ACTIVE");',
   );
 
   // Create default users if they do not exist.
