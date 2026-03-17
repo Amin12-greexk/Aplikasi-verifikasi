@@ -33,7 +33,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Verifikasi Mobile',
+      title: 'TEI VERIVIKASI',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       home: AuthService.isLoggedIn ? const HomeShell() : const LoginPage(),

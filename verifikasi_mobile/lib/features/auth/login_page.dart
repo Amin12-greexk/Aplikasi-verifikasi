@@ -85,20 +85,32 @@ class _LoginPageState extends State<LoginPage> {
               children: [
                 // Logo / App icon
                 Container(
-                  padding: const EdgeInsets.all(20),
+                  width: 108,
+                  height: 108,
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: AppColors.primarySurface,
-                    shape: BoxShape.circle,
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(color: AppColors.cardBorder),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withAlpha(12),
+                        blurRadius: 14,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
                   ),
-                  child: const Icon(
-                    Icons.verified_user,
-                    size: 48,
-                    color: AppColors.primary,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: Image.asset(
+                      'assets/logo.jpg',
+                      fit: BoxFit.cover,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 20),
                 const Text(
-                  'Verifikasi Mobile',
+                  'TEI VERIVIKASI',
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.w800,
