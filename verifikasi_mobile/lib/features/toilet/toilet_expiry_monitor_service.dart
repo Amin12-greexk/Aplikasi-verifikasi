@@ -61,7 +61,7 @@ class ToiletExpiryMonitorService {
         await LocalNotificationService.showToiletExpired(
           id: _buildNotificationId(key),
           title: 'Waktu toilet sudah habis',
-          body: '$employeeLabel belum scan security.',
+          body: '$employeeLabel sudah melewati batas waktu toilet.',
         );
         _notifiedKeys.add(key);
       }

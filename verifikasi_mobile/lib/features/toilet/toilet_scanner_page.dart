@@ -9,14 +9,20 @@ import 'toilet_permit_service.dart';
 
 class ToiletScannerTab extends StatefulWidget {
   final bool isPengawas;
+  final bool isActive;
 
-  const ToiletScannerTab({super.key, required this.isPengawas});
+  const ToiletScannerTab({
+    super.key,
+    required this.isPengawas,
+    required this.isActive,
+  });
 
   @override
   State<ToiletScannerTab> createState() => _ToiletScannerTabState();
 }
 
-class _ToiletScannerTabState extends State<ToiletScannerTab> {
+class _ToiletScannerTabState extends State<ToiletScannerTab>
+    with WidgetsBindingObserver {
   static const double _scanAreaRatio = 0.96;
   static const double _minScanAreaSize = 220.0;
   static const Duration _sameCodeCooldown = Duration(seconds: 4);
@@ -29,6 +35,7 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
     formats: [BarcodeFormat.qrCode],
     cameraResolution: const Size(1280, 720),
     useNewCameraSelector: false,
+    autoStart: false,
   );
 
   bool _isProcessing = false;
@@ -44,27 +51,80 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
   double _zoomLevel = 0.25;
   double _baseZoomLevel = 0.25;
   int _selectedDuration = 10;
+  AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
+  bool _isCameraRunning = false;
+  bool _isSyncingCamera = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       _currentTimeNotifier.value = WibTime.now();
     });
-    Future.delayed(const Duration(milliseconds: 1500), () async {
-      if (!mounted) return;
-      try {
-        await _controller.setZoomScale(_zoomLevel);
-      } catch (_) {}
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _syncCameraState();
     });
   }
 
   @override
+  void didUpdateWidget(covariant ToiletScannerTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isActive != widget.isActive) {
+      _syncCameraState();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appLifecycleState = state;
+    _syncCameraState();
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _controller.stop();
     _clockTimer?.cancel();
     _currentTimeNotifier.dispose();
     super.dispose();
+  }
+
+  bool get _shouldRunCamera =>
+      widget.isActive && _appLifecycleState == AppLifecycleState.resumed;
+
+  Future<void> _syncCameraState() async {
+    if (!mounted || _isSyncingCamera) return;
+
+    _isSyncingCamera = true;
+    final shouldRun = _shouldRunCamera;
+
+    try {
+      if (shouldRun) {
+        if (!_isCameraRunning) {
+          await _controller.start();
+          _isCameraRunning = true;
+        }
+        await _controller.setZoomScale(_zoomLevel);
+      } else if (_isCameraRunning) {
+        await _controller.stop();
+        _isCameraRunning = false;
+      }
+    } catch (e) {
+      _isCameraRunning = false;
+      debugPrint('[ToiletScanner] Failed to sync camera state: $e');
+    } finally {
+      _isSyncingCamera = false;
+    }
+  }
+
+  Future<void> _retryCamera() async {
+    try {
+      await _controller.stop();
+    } catch (_) {}
+    _isCameraRunning = false;
+    await _syncCameraState();
   }
 
   String _formatClock(DateTime value) {
@@ -160,6 +220,7 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
     required String pin,
     required Map<String, dynamic> permit,
   }) async {
+    final durationMinutes = permit['duration_minutes'] as int? ?? 10;
     final approvedBy = permit['approved_by']?.toString().trim() ?? '';
     final approvedAt = _formatTimeLabel(
       permit['approved_at']?.toString(),
@@ -177,6 +238,7 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
       withSeconds: true,
     );
     final employeeLabel = nama.isNotEmpty ? '$nama (PIN: $pin)' : 'PIN: $pin';
+    final waitingSecurity = ToiletPermitService.isWaitingSecurity(permit);
 
     final proceed = await showDialog<bool>(
       context: context,
@@ -223,13 +285,19 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
               ),
               const SizedBox(height: 8),
               _modalInfoRow(
-                'Batas kembali',
-                expiresAt == '-' ? 'Batas belum tersedia' : expiresAt,
+                waitingSecurity ? 'Durasi izin' : 'Batas kembali',
+                waitingSecurity
+                    ? '$durationMinutes menit'
+                    : (expiresAt == '-' ? 'Batas belum tersedia' : expiresAt),
               ),
               const SizedBox(height: 8),
               _modalInfoRow(
-                'Sisa waktu',
-                ToiletPermitService.formatRemainingDetailedLabel(remaining),
+                waitingSecurity ? 'Timer mulai' : 'Sisa waktu',
+                waitingSecurity
+                    ? 'Saat security scan ini'
+                    : ToiletPermitService.formatRemainingDetailedLabel(
+                        remaining,
+                      ),
               ),
               if (alreadyScanned) ...[
                 const SizedBox(height: 8),
@@ -372,10 +440,14 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
       final isDuplicate = message.toLowerCase().contains('sudah');
       final remaining = ToiletPermitService.remainingSecondsForPermit(result);
       final expiryLabel = _formatTimeLabel(result['expires_at']?.toString());
+      final proofStartLabel = _formatTimeLabel(
+        result['proof_scanned_at']?.toString(),
+        withSeconds: true,
+      );
 
       final details = widget.isPengawas
-          ? '$message\nDurasi: ${result['duration_minutes']} menit • Batas: $expiryLabel'
-          : '$message\nSisa waktu: ${ToiletPermitService.formatRemainingLabel(remaining)} • Batas: $expiryLabel';
+          ? '$message\nDurasi: ${result['duration_minutes']} menit | Timer mulai setelah security scan'
+          : '$message\nMulai: $proofStartLabel | Batas: $expiryLabel\nSisa waktu: ${ToiletPermitService.formatRemainingLabel(remaining)}';
 
       setState(() {
         _lastResult = '$nama (PIN: $pin)\n$details';
@@ -446,7 +518,7 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
                         error.errorCode ==
                             MobileScannerErrorCode.permissionDenied
                         ? 'Izin kamera ditolak. Aktifkan izin kamera di pengaturan aplikasi.'
-                        : 'Kamera gagal dijalankan. Tutup dan buka ulang halaman scanner.';
+                        : 'Kamera gagal dijalankan. Tekan tombol di bawah untuk mencoba lagi.';
                     return Container(
                       color: Colors.black,
                       alignment: Alignment.center,
@@ -469,6 +541,15 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
                               fontWeight: FontWeight.w500,
                             ),
                           ),
+                          if (error.errorCode !=
+                              MobileScannerErrorCode.permissionDenied) ...[
+                            const SizedBox(height: 14),
+                            FilledButton.icon(
+                              onPressed: _retryCamera,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Coba Lagi'),
+                            ),
+                          ],
                         ],
                       ),
                     );

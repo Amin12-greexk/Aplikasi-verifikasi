@@ -9,7 +9,9 @@ import 'status_page.dart';
 
 /// Container widget for verification and toilet-permit flows.
 class VerificationTab extends StatefulWidget {
-  const VerificationTab({super.key});
+  final bool isShellActive;
+
+  const VerificationTab({super.key, required this.isShellActive});
 
   @override
   State<VerificationTab> createState() => _VerificationTabState();
@@ -18,15 +20,26 @@ class VerificationTab extends StatefulWidget {
 class _VerificationTabState extends State<VerificationTab>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  int _activeTabIndex = 0;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
+    _tabController.addListener(_handleTabChange);
+  }
+
+  void _handleTabChange() {
+    if (!mounted) return;
+    final nextIndex = _tabController.index;
+    if (_activeTabIndex != nextIndex) {
+      setState(() => _activeTabIndex = nextIndex);
+    }
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_handleTabChange);
     _tabController.dispose();
     super.dispose();
   }
@@ -75,9 +88,15 @@ class _VerificationTabState extends State<VerificationTab>
           child: TabBarView(
             controller: _tabController,
             children: [
-              ScannerTab(isPengawas: isPengawas),
+              ScannerTab(
+                isPengawas: isPengawas,
+                isActive: widget.isShellActive && _activeTabIndex == 0,
+              ),
               const StatusTab(),
-              ToiletScannerTab(isPengawas: isPengawas),
+              ToiletScannerTab(
+                isPengawas: isPengawas,
+                isActive: widget.isShellActive && _activeTabIndex == 2,
+              ),
               const ToiletStatusTab(),
             ],
           ),

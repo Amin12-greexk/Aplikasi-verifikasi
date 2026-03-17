@@ -128,15 +128,38 @@ int _normalizeDurationMinutes(Object? raw) {
   return parsed;
 }
 
-String _resolveToiletPermitState(Object? expiresAtRaw, {DateTime? now}) {
+bool _hasToiletTimerStarted(Object? proofStatusRaw, Object? expiresAtRaw) {
+  final proofStatus = proofStatusRaw?.toString().trim().toUpperCase() ?? '';
+  if (proofStatus != 'SCANNED') return false;
+  return _tryParseDateTime(expiresAtRaw) != null;
+}
+
+String _resolveToiletPermitState(
+  Object? expiresAtRaw, {
+  Object? proofStatusRaw,
+  DateTime? now,
+}) {
+  if (!_hasToiletTimerStarted(proofStatusRaw, expiresAtRaw)) {
+    return 'WAITING_SECURITY';
+  }
+
   final expiresAt = _tryParseDateTime(expiresAtRaw);
-  if (expiresAt == null) return 'ACTIVE';
+  if (expiresAt == null) return 'WAITING_SECURITY';
 
   final reference = now ?? _nowUtc();
   return expiresAt.isAfter(reference) ? 'ACTIVE' : 'EXPIRED';
 }
 
-int _remainingPermitSeconds(Object? expiresAtRaw, {DateTime? now}) {
+int _remainingPermitSeconds(
+  Object? expiresAtRaw, {
+  Object? proofStatusRaw,
+  Object? durationMinutesRaw,
+  DateTime? now,
+}) {
+  if (!_hasToiletTimerStarted(proofStatusRaw, expiresAtRaw)) {
+    return _normalizeDurationMinutes(durationMinutesRaw) * 60;
+  }
+
   final expiresAt = _tryParseDateTime(expiresAtRaw);
   if (expiresAt == null) return 0;
 
@@ -170,6 +193,7 @@ Map<String, Object?> _mapToiletPermitRow(
   final reference = now ?? _nowUtc();
   final permitState = _resolveToiletPermitState(
     row['expires_at'],
+    proofStatusRaw: row['proof_status'],
     now: reference,
   );
 
@@ -185,6 +209,8 @@ Map<String, Object?> _mapToiletPermitRow(
     'permit_state': permitState,
     'remaining_seconds': _remainingPermitSeconds(
       row['expires_at'],
+      proofStatusRaw: row['proof_status'],
+      durationMinutesRaw: row['duration_minutes'],
       now: reference,
     ),
     'created_at': row['created_at'],
@@ -204,7 +230,10 @@ Map<String, Object?> _mapToiletPermitHistoryRow(Map<String, Object?> row) {
     'proof_status': row['proof_status']?.toString() ?? 'PENDING',
     'permit_state':
         row['permit_state']?.toString() ??
-        _resolveToiletPermitState(row['expires_at']),
+        _resolveToiletPermitState(
+          row['expires_at'],
+          proofStatusRaw: row['proof_status'],
+        ),
     'tanggal': row['tanggal'],
     'created_at': row['created_at'],
   };
@@ -229,7 +258,11 @@ void _saveToiletPermitHistory(
       permitRow['proof_scanned_at'],
       permitRow['proof_status']?.toString() ?? 'PENDING',
       permitState ??
-          _resolveToiletPermitState(permitRow['expires_at'], now: reference),
+          _resolveToiletPermitState(
+            permitRow['expires_at'],
+            proofStatusRaw: permitRow['proof_status'],
+            now: reference,
+          ),
       _formatDate(reference),
     ],
   );
@@ -541,9 +574,6 @@ Future<Router> buildRouter(Database db) async {
       if (todayApprovalCount >= 2) {
         return bad('Maksimal izin toilet 2 kali per hari untuk setiap mitra');
       }
-      final expiresAtIso = _formatWibIso(
-        now.add(Duration(minutes: durationMinutes)),
-      );
       final approvedAtIso = _formatWibIso(now);
       final existing = db.select(
         'SELECT id_karyawan FROM toilet_permit WHERE id_karyawan=?',
@@ -552,18 +582,16 @@ Future<Router> buildRouter(Database db) async {
 
       await _retryDbOperation(() async {
         db.execute(
-          'INSERT INTO toilet_permit(id_karyawan, duration_minutes, approved_by, approved_at, expires_at, proof_scanned_by, proof_scanned_at, proof_status) VALUES(?, ?, ?, ?, ?, NULL, NULL, "PENDING") '
-          'ON CONFLICT(id_karyawan) DO UPDATE SET duration_minutes=?, approved_by=?, approved_at=?, expires_at=?, proof_scanned_by=NULL, proof_scanned_at=NULL, proof_status="PENDING";',
+          'INSERT INTO toilet_permit(id_karyawan, duration_minutes, approved_by, approved_at, expires_at, proof_scanned_by, proof_scanned_at, proof_status) VALUES(?, ?, ?, ?, NULL, NULL, NULL, "PENDING") '
+          'ON CONFLICT(id_karyawan) DO UPDATE SET duration_minutes=?, approved_by=?, approved_at=?, expires_at=NULL, proof_scanned_by=NULL, proof_scanned_at=NULL, proof_status="PENDING";',
           [
             id,
             durationMinutes,
             username,
             approvedAtIso,
-            expiresAtIso,
             durationMinutes,
             username,
             approvedAtIso,
-            expiresAtIso,
           ],
         );
         return null;
@@ -574,13 +602,18 @@ Future<Router> buildRouter(Database db) async {
           id,
         ]).first,
       );
-      _saveToiletPermitHistory(db, row, now: now, permitState: 'ACTIVE');
+      _saveToiletPermitHistory(
+        db,
+        row,
+        now: now,
+        permitState: 'WAITING_SECURITY',
+      );
 
       return ok({
         ..._mapToiletPermitRow(row, now: now),
         'message': existing.isEmpty
-            ? 'Izin toilet disetujui'
-            : 'Izin toilet diperbarui',
+            ? 'Izin toilet disetujui, menunggu scan security'
+            : 'Izin toilet diperbarui, menunggu scan security',
       });
     } catch (e) {
       return bad('Error: $e', code: 500);
@@ -606,27 +639,26 @@ Future<Router> buildRouter(Database db) async {
 
       final now = _nowUtc();
       final permit = Map<String, Object?>.from(rows.first);
-      final permitState = _resolveToiletPermitState(
-        permit['expires_at'],
-        now: now,
-      );
-      if (permitState == 'EXPIRED') {
-        return bad('Izin toilet sudah habis');
-      }
-
       final existingProof = permit['proof_scanned_at']?.toString().trim() ?? '';
       if (existingProof.isNotEmpty) {
         return ok({
           ..._mapToiletPermitRow(permit, now: now),
-          'message': 'Bukti scan sudah tercatat',
+          'message': 'Security scan sudah tercatat',
         });
       }
 
       final nowIso = _formatWibIso(now);
+      final expiresAtIso = _formatWibIso(
+        now.add(
+          Duration(
+            minutes: _normalizeDurationMinutes(permit['duration_minutes']),
+          ),
+        ),
+      );
       await _retryDbOperation(() async {
         db.execute(
-          'UPDATE toilet_permit SET proof_scanned_by=?, proof_scanned_at=?, proof_status="SCANNED" WHERE id_karyawan=?',
-          [username, nowIso, id],
+          'UPDATE toilet_permit SET proof_scanned_by=?, proof_scanned_at=?, expires_at=?, proof_status="SCANNED" WHERE id_karyawan=?',
+          [username, nowIso, expiresAtIso, id],
         );
         return null;
       });
@@ -640,7 +672,7 @@ Future<Router> buildRouter(Database db) async {
 
       return ok({
         ..._mapToiletPermitRow(updated, now: now),
-        'message': 'Izin toilet tervalidasi',
+        'message': 'Security scan berhasil, timer dimulai',
       });
     } catch (e) {
       return bad('Error: $e', code: 500);
@@ -714,7 +746,7 @@ Future<Router> buildRouter(Database db) async {
         .where(
           (permit) =>
               permit['permit_state'] == 'EXPIRED' &&
-              permit['proof_status']?.toString().toUpperCase() != 'SCANNED',
+              permit['proof_status']?.toString().toUpperCase() == 'SCANNED',
         )
         .toList();
     return ok({

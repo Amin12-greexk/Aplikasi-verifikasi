@@ -6,6 +6,7 @@ import '../../core/utils/wib_time.dart';
 class ToiletPermitService {
   static const String stateActive = 'active';
   static const String stateExpired = 'expired';
+  static const String stateWaitingSecurity = 'waiting_security';
   static const String proofPending = 'pending';
   static const String proofScanned = 'scanned';
 
@@ -31,7 +32,9 @@ class ToiletPermitService {
 
   static String _normalizeState(Object? raw) {
     final value = raw?.toString().trim().toUpperCase() ?? '';
-    return value == 'EXPIRED' ? stateExpired : stateActive;
+    if (value == 'EXPIRED') return stateExpired;
+    if (value == 'WAITING_SECURITY') return stateWaitingSecurity;
+    return stateActive;
   }
 
   static String _normalizeProofStatus(Object? raw) {
@@ -39,10 +42,24 @@ class ToiletPermitService {
     return value == 'SCANNED' ? proofScanned : proofPending;
   }
 
+  static int _durationMinutesFromRaw(Map<String, dynamic> raw) {
+    return int.tryParse(raw['duration_minutes']?.toString() ?? '') ?? 10;
+  }
+
+  static bool _countdownStartedFromRaw(Map<String, dynamic> raw) {
+    final proofStatus = _normalizeProofStatus(raw['proof_status']);
+    final expiresAt = parseDateTime(raw['expires_at']?.toString());
+    return proofStatus == proofScanned && expiresAt != null;
+  }
+
   static int _remainingSecondsFromRaw(
     Map<String, dynamic> raw, {
     DateTime? now,
   }) {
+    if (!_countdownStartedFromRaw(raw)) {
+      return _durationMinutesFromRaw(raw) * 60;
+    }
+
     final remainingRaw = raw['remaining_seconds'];
     final remaining = int.tryParse(remainingRaw?.toString() ?? '');
     if (remaining != null) {
@@ -61,24 +78,26 @@ class ToiletPermitService {
     Map<String, dynamic> raw, {
     bool preserveHistoryState = false,
   }) {
-    final durationMinutes = int.tryParse(
-      raw['duration_minutes']?.toString() ?? '',
-    );
+    final durationMinutes = _durationMinutesFromRaw(raw);
+    final countdownStarted = _countdownStartedFromRaw(raw);
     final remainingSeconds = _remainingSecondsFromRaw(raw);
     final normalizedState = _normalizeState(raw['permit_state']);
     final permitState = preserveHistoryState
         ? normalizedState
-        : (remainingSeconds == 0 ? stateExpired : normalizedState);
+        : (!countdownStarted
+              ? stateWaitingSecurity
+              : (remainingSeconds == 0 ? stateExpired : normalizedState));
 
     return {
       ...raw,
-      'duration_minutes': durationMinutes ?? 10,
+      'duration_minutes': durationMinutes,
       'proof_status': _normalizeProofStatus(raw['proof_status']),
       'permit_state': permitState,
       'remaining_seconds': remainingSeconds,
+      'countdown_started': countdownStarted,
       'is_active': preserveHistoryState
-          ? permitState == stateActive
-          : (permitState == stateActive && remainingSeconds > 0),
+          ? permitState != stateExpired
+          : permitState != stateExpired,
     };
   }
 
@@ -129,8 +148,15 @@ class ToiletPermitService {
   }
 
   static bool isExpiredPermit(Map<String, dynamic> permit, {DateTime? now}) {
-    return remainingSecondsForPermit(permit, now: now) == 0 ||
-        _normalizeState(permit['permit_state']) == stateExpired;
+    return _normalizeState(permit['permit_state']) == stateExpired;
+  }
+
+  static bool isWaitingSecurity(Map<String, dynamic> permit) {
+    return _normalizeState(permit['permit_state']) == stateWaitingSecurity;
+  }
+
+  static bool hasCountdownStarted(Map<String, dynamic> permit) {
+    return _countdownStartedFromRaw(permit);
   }
 
   static bool isProofScanned(Map<String, dynamic> permit) {

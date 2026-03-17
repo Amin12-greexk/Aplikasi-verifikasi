@@ -11,14 +11,19 @@ import 'verification_service.dart';
 
 class ScannerTab extends StatefulWidget {
   final bool isPengawas;
+  final bool isActive;
 
-  const ScannerTab({super.key, required this.isPengawas});
+  const ScannerTab({
+    super.key,
+    required this.isPengawas,
+    required this.isActive,
+  });
 
   @override
   State<ScannerTab> createState() => _ScannerTabState();
 }
 
-class _ScannerTabState extends State<ScannerTab> {
+class _ScannerTabState extends State<ScannerTab> with WidgetsBindingObserver {
   static const double _scanAreaRatio = 0.96;
   static const double _minScanAreaSize = 220.0;
   static const Duration _sameCodeCooldown = Duration(seconds: 4);
@@ -29,6 +34,7 @@ class _ScannerTabState extends State<ScannerTab> {
     formats: [BarcodeFormat.qrCode],
     cameraResolution: Size(1280, 720),
     useNewCameraSelector: false,
+    autoStart: false,
   );
   bool _isProcessing = false;
   String? _lastResult;
@@ -42,27 +48,78 @@ class _ScannerTabState extends State<ScannerTab> {
   DateTime? _lastScannedAt;
   double _zoomLevel = 0.25;
   double _baseZoomLevel = 0.25;
+  AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
+  bool _isCameraRunning = false;
+  bool _isSyncingCamera = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _startDeviceClock();
     _flushOfflineQueue();
-    // Apply default zoom after camera starts
-    Future.delayed(const Duration(milliseconds: 1500), () async {
-      if (mounted) {
-        try {
-          await _controller.setZoomScale(_zoomLevel);
-        } catch (_) {}
-      }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _syncCameraState();
     });
   }
 
   @override
+  void didUpdateWidget(covariant ScannerTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isActive != widget.isActive) {
+      _syncCameraState();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appLifecycleState = state;
+    _syncCameraState();
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _controller.stop();
     _clockTimer?.cancel();
     _currentTimeNotifier.dispose();
     super.dispose();
+  }
+
+  bool get _shouldRunCamera =>
+      widget.isActive && _appLifecycleState == AppLifecycleState.resumed;
+
+  Future<void> _syncCameraState() async {
+    if (!mounted || _isSyncingCamera) return;
+
+    _isSyncingCamera = true;
+    final shouldRun = _shouldRunCamera;
+
+    try {
+      if (shouldRun) {
+        if (!_isCameraRunning) {
+          await _controller.start();
+          _isCameraRunning = true;
+        }
+        await _controller.setZoomScale(_zoomLevel);
+      } else if (_isCameraRunning) {
+        await _controller.stop();
+        _isCameraRunning = false;
+      }
+    } catch (e) {
+      _isCameraRunning = false;
+      debugPrint('[Scanner] Failed to sync camera state: $e');
+    } finally {
+      _isSyncingCamera = false;
+    }
+  }
+
+  Future<void> _retryCamera() async {
+    try {
+      await _controller.stop();
+    } catch (_) {}
+    _isCameraRunning = false;
+    await _syncCameraState();
   }
 
   void _startDeviceClock() {
@@ -358,7 +415,7 @@ class _ScannerTabState extends State<ScannerTab> {
                         error.errorCode ==
                             MobileScannerErrorCode.permissionDenied
                         ? 'Izin kamera ditolak. Aktifkan izin kamera di pengaturan aplikasi.'
-                        : 'Kamera gagal dijalankan. Tutup dan buka ulang halaman scanner.';
+                        : 'Kamera gagal dijalankan. Tekan tombol di bawah untuk mencoba lagi.';
                     return Container(
                       color: Colors.black,
                       alignment: Alignment.center,
@@ -381,6 +438,15 @@ class _ScannerTabState extends State<ScannerTab> {
                               fontWeight: FontWeight.w500,
                             ),
                           ),
+                          if (error.errorCode !=
+                              MobileScannerErrorCode.permissionDenied) ...[
+                            const SizedBox(height: 14),
+                            FilledButton.icon(
+                              onPressed: _retryCamera,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Coba Lagi'),
+                            ),
+                          ],
                         ],
                       ),
                     );

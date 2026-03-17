@@ -59,7 +59,6 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
   late int _index;
   late AnimationController _headerAnimationController;
-  late final List<Widget> _tabs;
 
   bool get _isPengawas => AuthService.isPengawas();
 
@@ -68,15 +67,6 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _index = 1;
-    _tabs = _isPengawas
-        ? const [
-            HomePage(),
-            VerificationTab(),
-            AttendancePage(),
-            HistoryPage(),
-            MorePage(),
-          ]
-        : const [HomePage(), VerificationTab(), HistoryPage(), MorePage()];
     _headerAnimationController = AnimationController(
       duration: const Duration(milliseconds: 600),
       vsync: this,
@@ -127,7 +117,21 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
 
   /// Build the appropriate body based on current tab index and role.
   Widget _body() {
-    return IndexedStack(index: _index, children: _tabs);
+    final tabs = _isPengawas
+        ? <Widget>[
+            const HomePage(),
+            VerificationTab(isShellActive: _index == 1),
+            const AttendancePage(),
+            const HistoryPage(),
+            const MorePage(),
+          ]
+        : <Widget>[
+            const HomePage(),
+            VerificationTab(isShellActive: _index == 1),
+            const HistoryPage(),
+            const MorePage(),
+          ];
+    return IndexedStack(index: _index, children: tabs);
   }
 
   List<NavigationDestination> _buildDestinations() {

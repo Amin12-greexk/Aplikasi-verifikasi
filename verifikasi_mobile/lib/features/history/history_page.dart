@@ -311,6 +311,9 @@ class _HistoryPageState extends State<HistoryPage> {
     if (permitState == 'expired') {
       statusColor = AppColors.error;
       statusLabel = 'Waktu Habis';
+    } else if (permitState == 'waiting_security') {
+      statusColor = AppColors.warning;
+      statusLabel = 'Menunggu Security';
     } else if (proofStatus == 'scanned') {
       statusColor = AppColors.success;
       statusLabel = 'Tervalidasi';

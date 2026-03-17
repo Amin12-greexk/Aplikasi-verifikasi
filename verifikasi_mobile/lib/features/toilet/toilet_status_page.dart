@@ -105,20 +105,19 @@ class _ToiletStatusTabState extends State<ToiletStatusTab> {
   }
 
   Color _statusColor(Map<String, dynamic> permit) {
-    if (ToiletPermitService.isProofScanned(permit)) {
-      return AppColors.success;
-    }
-    return AppColors.error;
+    return ToiletPermitService.isWaitingSecurity(permit)
+        ? AppColors.error
+        : AppColors.success;
   }
 
   String _statusLabel(Map<String, dynamic> permit) {
-    if (ToiletPermitService.isProofScanned(permit)) {
-      return 'Sudah Scan Security';
+    if (ToiletPermitService.isWaitingSecurity(permit)) {
+      return 'Menunggu Scan Security';
     }
     if (ToiletPermitService.isExpiredPermit(permit, now: _now)) {
-      return 'Belum Scan Security • Waktu Habis';
+      return 'Sudah Scan Security | Waktu Habis';
     }
-    return 'Belum Scan Security';
+    return 'Sudah Scan Security';
   }
 
   int _remainingSeconds(Map<String, dynamic> permit) {
@@ -127,16 +126,16 @@ class _ToiletStatusTabState extends State<ToiletStatusTab> {
 
   String _statusDescription(Map<String, dynamic> permit) {
     final remaining = _remainingSeconds(permit);
+    if (ToiletPermitService.isWaitingSecurity(permit)) {
+      return 'Pengawas sudah memberi izin. Hitungan waktu belum berjalan sampai QR discan oleh security.';
+    }
     if (ToiletPermitService.isExpiredPermit(permit, now: _now)) {
-      return 'Izin toilet sudah habis dan belum ada scan security.';
+      return 'Waktu toilet sudah habis. Security sudah memulai timer, tetapi batas waktunya telah terlewati.';
     }
-    if (ToiletPermitService.isProofScanned(permit)) {
-      final proofBy = permit['proof_scanned_by']?.toString().trim();
-      return proofBy == null || proofBy.isEmpty
-          ? 'Izin ini sudah dicatat oleh security.'
-          : 'Izin ini sudah dicatat oleh security: $proofBy.';
-    }
-    return 'Masih menunggu proof scan security. Sisa waktu ${ToiletPermitService.formatRemainingDetailedLabel(remaining)}.';
+    final proofBy = permit['proof_scanned_by']?.toString().trim();
+    return proofBy == null || proofBy.isEmpty
+        ? 'Timer toilet sedang berjalan. Sisa waktu ${ToiletPermitService.formatRemainingDetailedLabel(remaining)}.'
+        : 'Timer toilet sedang berjalan sejak discan oleh $proofBy. Sisa waktu ${ToiletPermitService.formatRemainingDetailedLabel(remaining)}.';
   }
 
   @override
@@ -235,6 +234,13 @@ class _ToiletStatusTabState extends State<ToiletStatusTab> {
               final color = _statusColor(permit);
               final label = _statusLabel(permit);
               final remaining = _remainingSeconds(permit);
+              final waitingSecurity = ToiletPermitService.isWaitingSecurity(
+                permit,
+              );
+              final expired = ToiletPermitService.isExpiredPermit(
+                permit,
+                now: _now,
+              );
               final approvedAt = _formatTimeLabel(
                 permit['approved_at']?.toString(),
                 withSeconds: true,
@@ -280,8 +286,10 @@ class _ToiletStatusTabState extends State<ToiletStatusTab> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      proofScanned
-                          ? 'Sudah diverifikasi security'
+                      waitingSecurity
+                          ? 'Belum mulai dihitung'
+                          : expired
+                          ? 'Waktu toilet habis'
                           : ToiletPermitService.formatRemainingDetailedLabel(
                               remaining,
                             ),
@@ -323,18 +331,29 @@ class _ToiletStatusTabState extends State<ToiletStatusTab> {
                     const SizedBox(height: 6),
                     _infoLine(
                       label: 'Batas kembali',
-                      value: expiresAt == '-'
-                          ? 'Batas waktu belum tersedia'
-                          : expiresAt,
+                      value: waitingSecurity
+                          ? 'Belum ada. Timer mulai saat security scan.'
+                          : (expiresAt == '-'
+                                ? 'Batas waktu belum tersedia'
+                                : expiresAt),
                     ),
                     const SizedBox(height: 6),
                     _infoLine(label: 'Durasi izin', value: '$duration menit'),
                     const SizedBox(height: 6),
                     _infoLine(
+                      label: 'Timer mulai',
+                      value: proofScanned
+                          ? (proofAt == '-'
+                                ? 'Sudah dimulai oleh security'
+                                : proofAt)
+                          : 'Akan mulai saat security scan',
+                    ),
+                    const SizedBox(height: 6),
+                    _infoLine(
                       label: 'Security',
                       value: proofScanned
                           ? '${proofBy == null || proofBy.isEmpty ? 'Security' : proofBy} pada $proofAt'
-                          : 'Belum ada proof scan dari security',
+                          : 'Belum ada scan security',
                     ),
                   ],
                 ),
