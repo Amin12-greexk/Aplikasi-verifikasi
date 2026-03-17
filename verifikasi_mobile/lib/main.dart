@@ -4,6 +4,7 @@ import 'core/config/config.dart';
 import 'core/config/dev_visibility.dart';
 import 'core/services/auth_service.dart';
 import 'core/services/daily_refresh_manager.dart';
+import 'core/services/local_notification_service.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
 import 'features/attendance/attendance_page.dart';
@@ -11,6 +12,8 @@ import 'features/auth/login_page.dart';
 import 'features/history/history_page.dart';
 import 'features/home/home_page.dart';
 import 'features/more/more_page.dart';
+import 'features/toilet/toilet_background_worker_service.dart';
+import 'features/toilet/toilet_expiry_monitor_service.dart';
 import 'features/verification/crud_log_page.dart';
 import 'features/verification/verification_tab.dart';
 
@@ -19,6 +22,8 @@ void main() async {
   await ServerConfig.init();
   await DevVisibility.init();
   await AuthService.init();
+  await LocalNotificationService.init();
+  await ToiletBackgroundWorkerService.syncWithCurrentUser();
   runApp(const MyApp());
 }
 
@@ -77,11 +82,17 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
       vsync: this,
     )..forward();
 
+    if (AuthService.isSecurity()) {
+      ToiletExpiryMonitorService.start();
+    } else {
+      ToiletExpiryMonitorService.stop();
+    }
     _checkDailyRefresh();
   }
 
   @override
   void dispose() {
+    ToiletExpiryMonitorService.stop();
     _headerAnimationController.dispose();
     super.dispose();
   }

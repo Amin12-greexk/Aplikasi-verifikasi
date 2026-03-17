@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/services/auth_service.dart';
 import '../../core/theme/app_colors.dart';
+import '../toilet/toilet_background_worker_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -55,9 +56,12 @@ class _LoginPageState extends State<LoginPage> {
       } else {
         await AuthService.loginSecurity(username, password);
       }
+      await ToiletBackgroundWorkerService.syncWithCurrentUser();
 
       if (mounted) {
-        Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+        Navigator.of(
+          context,
+        ).pushNamedAndRemoveUntil('/home', (route) => false);
       }
     } catch (e) {
       if (mounted) {
@@ -121,7 +125,8 @@ class _LoginPageState extends State<LoginPage> {
                         label: 'Pengawas',
                         isSelected: _selectedRole == UserRole.pengawas,
                         color: AppColors.pengawas,
-                        onTap: () => setState(() => _selectedRole = UserRole.pengawas),
+                        onTap: () =>
+                            setState(() => _selectedRole = UserRole.pengawas),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -131,7 +136,8 @@ class _LoginPageState extends State<LoginPage> {
                         label: 'Security',
                         isSelected: _selectedRole == UserRole.security,
                         color: AppColors.security,
-                        onTap: () => setState(() => _selectedRole = UserRole.security),
+                        onTap: () =>
+                            setState(() => _selectedRole = UserRole.security),
                       ),
                     ),
                   ],
@@ -158,10 +164,13 @@ class _LoginPageState extends State<LoginPage> {
                     prefixIcon: const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
                       icon: Icon(
-                        _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                        _obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
                         color: AppColors.textHint,
                       ),
-                      onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
                     ),
                   ),
                   obscureText: _obscurePassword,
@@ -183,12 +192,19 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.error_outline, size: 16, color: AppColors.error),
+                        const Icon(
+                          Icons.error_outline,
+                          size: 16,
+                          color: AppColors.error,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             _error!,
-                            style: const TextStyle(fontSize: 12, color: AppColors.error),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.error,
+                            ),
                           ),
                         ),
                       ],
@@ -209,9 +225,18 @@ class _LoginPageState extends State<LoginPage> {
                         ? const SizedBox(
                             width: 20,
                             height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
                           )
-                        : const Text('Login', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                        : const Text(
+                            'Login',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                   ),
                 ),
               ],
@@ -256,7 +281,11 @@ class _RoleButton extends StatelessWidget {
         ),
         child: Column(
           children: [
-            Icon(icon, size: 28, color: isSelected ? color : AppColors.textHint),
+            Icon(
+              icon,
+              size: 28,
+              color: isSelected ? color : AppColors.textHint,
+            ),
             const SizedBox(height: 6),
             Text(
               label,

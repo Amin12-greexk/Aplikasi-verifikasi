@@ -145,6 +145,24 @@ int _remainingPermitSeconds(Object? expiresAtRaw, {DateTime? now}) {
   return remaining > 0 ? remaining : 0;
 }
 
+int _countTodayToiletPermitApprovals(
+  Database db,
+  String idKaryawan, {
+  DateTime? now,
+}) {
+  final reference = now ?? _nowUtc();
+  final result = db.select(
+    'SELECT COUNT(DISTINCT approved_at) AS count '
+    'FROM toilet_permit_history '
+    'WHERE id_karyawan=? AND tanggal=? AND approved_at IS NOT NULL',
+    [idKaryawan, _formatDate(reference)],
+  );
+  if (result.isEmpty) return 0;
+  final rawCount = result.first['count'];
+  if (rawCount is int) return rawCount;
+  return int.tryParse(rawCount?.toString() ?? '') ?? 0;
+}
+
 Map<String, Object?> _mapToiletPermitRow(
   Map<String, Object?> row, {
   DateTime? now,
@@ -515,6 +533,14 @@ Future<Router> buildRouter(Database db) async {
 
       id = _extractBarcodeInfo(id);
       final now = _nowUtc();
+      final todayApprovalCount = _countTodayToiletPermitApprovals(
+        db,
+        id,
+        now: now,
+      );
+      if (todayApprovalCount >= 2) {
+        return bad('Maksimal izin toilet 2 kali per hari untuk setiap mitra');
+      }
       final expiresAtIso = _formatWibIso(
         now.add(Duration(minutes: durationMinutes)),
       );
@@ -628,7 +654,7 @@ Future<Router> buildRouter(Database db) async {
     ]);
     if (rows.isEmpty) {
       return Response.notFound(
-        jsonEncode({'error': 'not found'}),
+        jsonEncode({'error': 'Belum ada izin toilet dari pengawas'}),
         headers: {'Content-Type': 'application/json'},
       );
     }
@@ -678,10 +704,32 @@ Future<Router> buildRouter(Database db) async {
     return ok({'permits': list});
   }
 
+  Response toiletPermitAlertsHandler(Request req) {
+    final now = _nowUtc();
+    final rows = db.select(
+      'SELECT * FROM toilet_permit ORDER BY expires_at ASC, approved_at DESC',
+    );
+    final alerts = rows
+        .map((r) => _mapToiletPermitRow(Map<String, Object?>.from(r), now: now))
+        .where(
+          (permit) =>
+              permit['permit_state'] == 'EXPIRED' &&
+              permit['proof_status']?.toString().toUpperCase() != 'SCANNED',
+        )
+        .toList();
+    return ok({
+      'alerts': alerts,
+      'count': alerts.length,
+      'generated_at': _formatWibIso(now),
+    });
+  }
+
   r.get('/logs', logsHandler);
   r.get('/logs/', logsHandler);
   r.get('/toilet-permits', toiletPermitHandler);
   r.get('/toilet-permits/', toiletPermitHandler);
+  r.get('/toilet-permits-alerts', toiletPermitAlertsHandler);
+  r.get('/toilet-permits-alerts/', toiletPermitAlertsHandler);
 
   // Get logs by date.
   r.get('/logs-history/<tanggal>', (Request req, String tanggal) {

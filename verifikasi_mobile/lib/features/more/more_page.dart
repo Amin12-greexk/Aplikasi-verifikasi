@@ -4,6 +4,7 @@ import '../../core/config/dev_visibility.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/config/server_profile_manager.dart';
 import '../../core/theme/app_colors.dart';
+import '../toilet/toilet_background_worker_service.dart';
 import 'server_profiles_page.dart';
 
 /// "Lainnya" tab — settings, server profiles, app info, logout.
@@ -333,6 +334,7 @@ class MorePage extends StatelessWidget {
           ),
           ElevatedButton(
             onPressed: () async {
+              await ToiletBackgroundWorkerService.cancel();
               await AuthService.logout();
               if (ctx.mounted) {
                 Navigator.of(

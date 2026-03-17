@@ -9,6 +9,22 @@ class ToiletPermitService {
   static const String proofPending = 'pending';
   static const String proofScanned = 'scanned';
 
+  static String _resolveErrorMessage(
+    Map<String, dynamic> data,
+    String fallback, {
+    int? statusCode,
+  }) {
+    final raw = data['error']?.toString().trim() ?? '';
+    final normalized = raw.toLowerCase();
+    if (statusCode == 404 || normalized == 'not found') {
+      return 'Belum ada izin toilet dari pengawas';
+    }
+    if (raw.startsWith('Error: ')) {
+      return raw.substring('Error: '.length).trim();
+    }
+    return raw.isEmpty ? fallback : raw;
+  }
+
   static DateTime? parseDateTime(String? raw) {
     return WibTime.parse(raw);
   }
@@ -163,7 +179,13 @@ class ToiletPermitService {
     );
     final data = BaseApiClient.tryJson(response.body);
     if (response.statusCode >= 400) {
-      throw Exception(data['error'] ?? 'Gagal menyetujui izin toilet');
+      throw Exception(
+        _resolveErrorMessage(
+          data,
+          'Gagal menyetujui izin toilet',
+          statusCode: response.statusCode,
+        ),
+      );
     }
     return _normalizePermit(data);
   }
@@ -175,7 +197,13 @@ class ToiletPermitService {
     );
     final data = BaseApiClient.tryJson(response.body);
     if (response.statusCode >= 400) {
-      throw Exception(data['error'] ?? 'Gagal memvalidasi izin toilet');
+      throw Exception(
+        _resolveErrorMessage(
+          data,
+          'Gagal memvalidasi izin toilet',
+          statusCode: response.statusCode,
+        ),
+      );
     }
     return _normalizePermit(data);
   }
@@ -188,7 +216,13 @@ class ToiletPermitService {
     );
     final data = BaseApiClient.tryJson(response.body);
     if (response.statusCode >= 400) {
-      throw Exception(data['error'] ?? 'Gagal mengambil status izin toilet');
+      throw Exception(
+        _resolveErrorMessage(
+          data,
+          'Gagal mengambil status izin toilet',
+          statusCode: response.statusCode,
+        ),
+      );
     }
     return _normalizePermit(data);
   }
@@ -197,11 +231,34 @@ class ToiletPermitService {
     final response = await BaseApiClient.get('/toilet-permits');
     if (response.statusCode >= 400) {
       final body = BaseApiClient.tryJson(response.body);
-      throw Exception(body['error'] ?? 'Gagal mengambil izin toilet');
+      throw Exception(
+        _resolveErrorMessage(
+          body,
+          'Gagal mengambil izin toilet',
+          statusCode: response.statusCode,
+        ),
+      );
     }
     final body = BaseApiClient.tryJson(response.body);
     final List<dynamic> permits = body['permits'] ?? [];
     return _normalizePermitList(permits);
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchExpiredAlerts() async {
+    final response = await BaseApiClient.get('/toilet-permits-alerts');
+    if (response.statusCode >= 400) {
+      final body = BaseApiClient.tryJson(response.body);
+      throw Exception(
+        _resolveErrorMessage(
+          body,
+          'Gagal mengambil alert izin toilet',
+          statusCode: response.statusCode,
+        ),
+      );
+    }
+    final body = BaseApiClient.tryJson(response.body);
+    final List<dynamic> alerts = body['alerts'] ?? [];
+    return _normalizePermitList(alerts);
   }
 
   static Future<List<Map<String, dynamic>>> fetchPermitHistory(
@@ -210,7 +267,13 @@ class ToiletPermitService {
     final response = await BaseApiClient.get('/toilet-permits-history/$date');
     if (response.statusCode >= 400) {
       final body = BaseApiClient.tryJson(response.body);
-      throw Exception(body['error'] ?? 'Gagal mengambil riwayat izin toilet');
+      throw Exception(
+        _resolveErrorMessage(
+          body,
+          'Gagal mengambil riwayat izin toilet',
+          statusCode: response.statusCode,
+        ),
+      );
     }
     final body = BaseApiClient.tryJson(response.body);
     final List<dynamic> permits = body['permits'] ?? [];

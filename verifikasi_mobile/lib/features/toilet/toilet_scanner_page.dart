@@ -4,6 +4,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/wib_time.dart';
+import 'toilet_expiry_monitor_service.dart';
 import 'toilet_permit_service.dart';
 
 class ToiletScannerTab extends StatefulWidget {
@@ -75,6 +76,16 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
 
   String _formatTimeLabel(String? raw, {bool withSeconds = false}) {
     return WibTime.formatTime(raw, withSeconds: withSeconds);
+  }
+
+  String _userErrorMessage(Object error) {
+    final message = error.toString().replaceFirst(
+      RegExp(r'^Exception:\s*'),
+      '',
+    );
+    return message.trim().isEmpty
+        ? 'Terjadi kesalahan saat memproses scan'
+        : message.trim();
   }
 
   void _onZoomChanged(double value) {
@@ -371,8 +382,9 @@ class _ToiletScannerTabState extends State<ToiletScannerTab> {
         _lastStatus = isDuplicate ? 'duplicate' : 'success';
         _lastColor = isDuplicate ? AppColors.warning : AppColors.success;
       });
+      await ToiletExpiryMonitorService.refreshNow();
     } catch (e) {
-      final errorStr = e.toString();
+      final errorStr = _userErrorMessage(e);
       setState(() {
         _lastResult = '$nama (PIN: $pin)\n$errorStr';
         _lastStatus = 'error';
