@@ -6,14 +6,14 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/wib_time.dart';
 import 'toilet_permit_service.dart';
 
-class ToiletStatusTab extends StatefulWidget {
-  const ToiletStatusTab({super.key});
+class ToiletStatusPage extends StatefulWidget {
+  const ToiletStatusPage({super.key});
 
   @override
-  State<ToiletStatusTab> createState() => _ToiletStatusTabState();
+  State<ToiletStatusPage> createState() => _ToiletStatusPageState();
 }
 
-class _ToiletStatusTabState extends State<ToiletStatusTab> {
+class _ToiletStatusPageState extends State<ToiletStatusPage> {
   List<Map<String, dynamic>> _permits = [];
   bool _isLoading = true;
   bool _isRefreshing = false;
@@ -194,172 +194,186 @@ class _ToiletStatusTabState extends State<ToiletStatusTab> {
     final waitingSecurityCount = _permits.length - scannedCount;
     final expiredCount = _permits.length - activeCount;
 
-    return RefreshIndicator(
-      onRefresh: _loadPermits,
-      color: AppColors.primary,
-      child: ListView(
-        children: [
-          _PermitSummaryCard(
-            total: _permits.length,
-            active: activeCount,
-            scanned: scannedCount,
-            waitingSecurity: waitingSecurityCount,
-            expired: expiredCount,
-          ),
-          const SizedBox(height: 16),
-          if (_permits.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(32),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.cardBorder),
-              ),
-              child: Column(
-                children: [
-                  Icon(Icons.timer_off, size: 48, color: AppColors.textHint),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Belum ada izin toilet aktif',
-                    style: TextStyle(color: AppColors.textSecondary),
-                  ),
-                ],
-              ),
-            )
-          else
-            ..._permits.map((permit) {
-              final info = _extractEmployeeInfo(
-                permit['id_karyawan']?.toString() ?? '',
-              );
-              final color = _statusColor(permit);
-              final label = _statusLabel(permit);
-              final remaining = _remainingSeconds(permit);
-              final waitingSecurity = ToiletPermitService.isWaitingSecurity(
-                permit,
-              );
-              final expired = ToiletPermitService.isExpiredPermit(
-                permit,
-                now: _now,
-              );
-              final approvedAt = _formatTimeLabel(
-                permit['approved_at']?.toString(),
-                withSeconds: true,
-              );
-              final expiresAt = _formatTimeLabel(
-                permit['expires_at']?.toString(),
-                withSeconds: true,
-              );
-              final proofAt = _formatTimeLabel(
-                permit['proof_scanned_at']?.toString(),
-                withSeconds: true,
-              );
-              final proofScanned = ToiletPermitService.isProofScanned(permit);
-              final approvedBy = permit['approved_by']?.toString().trim();
-              final proofBy = permit['proof_scanned_by']?.toString().trim();
-              final duration = permit['duration_minutes']?.toString() ?? '-';
-
-              return Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(14),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Status Toilet',
+          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+        ),
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
+        elevation: 0,
+        centerTitle: true,
+      ),
+      backgroundColor: AppColors.background,
+      body: RefreshIndicator(
+        onRefresh: _loadPermits,
+        color: AppColors.primary,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            _PermitSummaryCard(
+              total: _permits.length,
+              active: activeCount,
+              scanned: scannedCount,
+              waitingSecurity: waitingSecurityCount,
+              expired: expiredCount,
+            ),
+            const SizedBox(height: 16),
+            if (_permits.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(32),
                 decoration: BoxDecoration(
-                  color: color.withAlpha(12),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: color.withAlpha(70), width: 1.3),
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.cardBorder),
                 ),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            info,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
-                            ),
-                          ),
-                        ),
-                        _chip(label, color),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      waitingSecurity
-                          ? 'Belum mulai dihitung'
-                          : expired
-                          ? 'Waktu toilet habis'
-                          : ToiletPermitService.formatRemainingDetailedLabel(
-                              remaining,
-                            ),
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: color,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      _statusDescription(permit),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
-                        height: 1.35,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      height: 1,
-                      color: color.withAlpha(45),
-                    ),
-                    const SizedBox(height: 12),
-                    _infoLine(
-                      label: 'Pengawas',
-                      value: approvedBy == null || approvedBy.isEmpty
-                          ? 'Nama pengawas belum tercatat'
-                          : approvedBy,
-                    ),
-                    const SizedBox(height: 6),
-                    _infoLine(
-                      label: 'Jam disetujui',
-                      value: approvedAt == '-'
-                          ? 'Belum ada jam persetujuan'
-                          : approvedAt,
-                    ),
-                    const SizedBox(height: 6),
-                    _infoLine(
-                      label: 'Batas kembali',
-                      value: waitingSecurity
-                          ? 'Belum ada. Timer mulai saat security scan.'
-                          : (expiresAt == '-'
-                                ? 'Batas waktu belum tersedia'
-                                : expiresAt),
-                    ),
-                    const SizedBox(height: 6),
-                    _infoLine(label: 'Durasi izin', value: '$duration menit'),
-                    const SizedBox(height: 6),
-                    _infoLine(
-                      label: 'Timer mulai',
-                      value: proofScanned
-                          ? (proofAt == '-'
-                                ? 'Sudah dimulai oleh security'
-                                : proofAt)
-                          : 'Akan mulai saat security scan',
-                    ),
-                    const SizedBox(height: 6),
-                    _infoLine(
-                      label: 'Security',
-                      value: proofScanned
-                          ? '${proofBy == null || proofBy.isEmpty ? 'Security' : proofBy} pada $proofAt'
-                          : 'Belum ada scan security',
+                    Icon(Icons.timer_off, size: 48, color: AppColors.textHint),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Belum ada izin toilet aktif',
+                      style: TextStyle(color: AppColors.textSecondary),
                     ),
                   ],
                 ),
-              );
-            }),
-        ],
+              )
+            else
+              ..._permits.map((permit) {
+                final info = _extractEmployeeInfo(
+                  permit['id_karyawan']?.toString() ?? '',
+                );
+                final color = _statusColor(permit);
+                final label = _statusLabel(permit);
+                final remaining = _remainingSeconds(permit);
+                final waitingSecurity = ToiletPermitService.isWaitingSecurity(
+                  permit,
+                );
+                final expired = ToiletPermitService.isExpiredPermit(
+                  permit,
+                  now: _now,
+                );
+                final approvedAt = _formatTimeLabel(
+                  permit['approved_at']?.toString(),
+                  withSeconds: true,
+                );
+                final expiresAt = _formatTimeLabel(
+                  permit['expires_at']?.toString(),
+                  withSeconds: true,
+                );
+                final proofAt = _formatTimeLabel(
+                  permit['proof_scanned_at']?.toString(),
+                  withSeconds: true,
+                );
+                final proofScanned = ToiletPermitService.isProofScanned(permit);
+                final approvedBy = permit['approved_by']?.toString().trim();
+                final proofBy = permit['proof_scanned_by']?.toString().trim();
+                final duration = permit['duration_minutes']?.toString() ?? '-';
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: color.withAlpha(12),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: color.withAlpha(70), width: 1.3),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              info,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ),
+                          _chip(label, color),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        waitingSecurity
+                            ? 'Belum mulai dihitung'
+                            : expired
+                            ? 'Waktu toilet habis'
+                            : ToiletPermitService.formatRemainingDetailedLabel(
+                                remaining,
+                              ),
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          color: color,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _statusDescription(permit),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        height: 1,
+                        color: color.withAlpha(45),
+                      ),
+                      const SizedBox(height: 12),
+                      _infoLine(
+                        label: 'Pengawas',
+                        value: approvedBy == null || approvedBy.isEmpty
+                            ? 'Nama pengawas belum tercatat'
+                            : approvedBy,
+                      ),
+                      const SizedBox(height: 6),
+                      _infoLine(
+                        label: 'Jam disetujui',
+                        value: approvedAt == '-'
+                            ? 'Belum ada jam persetujuan'
+                            : approvedAt,
+                      ),
+                      const SizedBox(height: 6),
+                      _infoLine(
+                        label: 'Batas kembali',
+                        value: waitingSecurity
+                            ? 'Belum ada. Timer mulai saat security scan.'
+                            : (expiresAt == '-'
+                                  ? 'Batas waktu belum tersedia'
+                                  : expiresAt),
+                      ),
+                      const SizedBox(height: 6),
+                      _infoLine(label: 'Durasi izin', value: '$duration menit'),
+                      const SizedBox(height: 6),
+                      _infoLine(
+                        label: 'Timer mulai',
+                        value: proofScanned
+                            ? (proofAt == '-'
+                                  ? 'Sudah dimulai oleh security'
+                                  : proofAt)
+                            : 'Akan mulai saat security scan',
+                      ),
+                      const SizedBox(height: 6),
+                      _infoLine(
+                        label: 'Security',
+                        value: proofScanned
+                            ? '${proofBy == null || proofBy.isEmpty ? 'Security' : proofBy} pada $proofAt'
+                            : 'Belum ada scan security',
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        ),
       ),
     );
   }

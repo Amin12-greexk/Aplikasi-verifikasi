@@ -1,0 +1,155 @@
+import 'package:flutter/material.dart';
+
+import '../../core/services/auth_service.dart';
+import '../../core/theme/app_colors.dart';
+import 'toilet_history_page.dart';
+import 'toilet_scanner_page.dart';
+import 'toilet_status_page.dart';
+
+class ToiletMenuPage extends StatelessWidget {
+  const ToiletMenuPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final isPengawas = AuthService.isPengawas();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Izin Toilet',
+          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+        ),
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
+        elevation: 0,
+        centerTitle: true,
+      ),
+      backgroundColor: AppColors.background,
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _MenuCard(
+            title: 'Scan Toilet',
+            subtitle: 'Buka kamera untuk validasi izin',
+            icon: Icons.wc,
+            color: AppColors.primary,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ToiletScannerPage(isPengawas: isPengawas),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          _MenuCard(
+            title: 'Status Toilet',
+            subtitle: 'Pantau timer izin toilet',
+            icon: Icons.timer,
+            color: AppColors.warning,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ToiletStatusPage()),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          _MenuCard(
+            title: 'Riwayat Toilet',
+            subtitle: 'Log data izin toilet',
+            icon: Icons.history,
+            color: AppColors.success,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ToiletHistoryPage()),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MenuCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _MenuCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.cardBorder),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.02),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, size: 28, color: color),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.chevron_right,
+              color: AppColors.textHint,
+              size: 24,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

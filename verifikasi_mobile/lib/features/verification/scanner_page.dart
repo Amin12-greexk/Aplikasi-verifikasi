@@ -9,21 +9,21 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/wib_time.dart';
 import 'verification_service.dart';
 
-class ScannerTab extends StatefulWidget {
+class ScannerPage extends StatefulWidget {
   final bool isPengawas;
   final bool isActive;
 
-  const ScannerTab({
+  const ScannerPage({
     super.key,
     required this.isPengawas,
-    required this.isActive,
+    this.isActive = true,
   });
 
   @override
-  State<ScannerTab> createState() => _ScannerTabState();
+  State<ScannerPage> createState() => _ScannerPageState();
 }
 
-class _ScannerTabState extends State<ScannerTab> with WidgetsBindingObserver {
+class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
   static const double _scanAreaRatio = 0.96;
   static const double _minScanAreaSize = 220.0;
   static const Duration _sameCodeCooldown = Duration(seconds: 4);
@@ -64,7 +64,7 @@ class _ScannerTabState extends State<ScannerTab> with WidgetsBindingObserver {
   }
 
   @override
-  void didUpdateWidget(covariant ScannerTab oldWidget) {
+  void didUpdateWidget(covariant ScannerPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.isActive != widget.isActive) {
       _syncCameraState();
@@ -373,7 +373,20 @@ class _ScannerTabState extends State<ScannerTab> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final isLocked = _isProcessing;
 
-    return Column(children: [Expanded(child: _buildScannerBox(isLocked))]);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Scan Pulang',
+          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+        ),
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
+        elevation: 0,
+        centerTitle: true,
+      ),
+      backgroundColor: Colors.black,
+      body: _buildScannerBox(isLocked),
+    );
   }
 
   Widget _buildScannerBox(bool isLocked) {

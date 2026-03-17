@@ -7,21 +7,21 @@ import '../../core/utils/wib_time.dart';
 import 'toilet_expiry_monitor_service.dart';
 import 'toilet_permit_service.dart';
 
-class ToiletScannerTab extends StatefulWidget {
+class ToiletScannerPage extends StatefulWidget {
   final bool isPengawas;
   final bool isActive;
 
-  const ToiletScannerTab({
+  const ToiletScannerPage({
     super.key,
     required this.isPengawas,
-    required this.isActive,
+    this.isActive = true,
   });
 
   @override
-  State<ToiletScannerTab> createState() => _ToiletScannerTabState();
+  State<ToiletScannerPage> createState() => _ToiletScannerPageState();
 }
 
-class _ToiletScannerTabState extends State<ToiletScannerTab>
+class _ToiletScannerPageState extends State<ToiletScannerPage>
     with WidgetsBindingObserver {
   static const double _scanAreaRatio = 0.96;
   static const double _minScanAreaSize = 220.0;
@@ -69,7 +69,7 @@ class _ToiletScannerTabState extends State<ToiletScannerTab>
   }
 
   @override
-  void didUpdateWidget(covariant ToiletScannerTab oldWidget) {
+  void didUpdateWidget(covariant ToiletScannerPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.isActive != widget.isActive) {
       _syncCameraState();
@@ -474,8 +474,19 @@ class _ToiletScannerTabState extends State<ToiletScannerTab>
     final isPengawas = widget.isPengawas;
     final isLocked = _isProcessing;
 
-    return Column(
-      children: [Expanded(child: _buildScannerBox(isPengawas, isLocked))],
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Scan Toilet',
+          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+        ),
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
+        elevation: 0,
+        centerTitle: true,
+      ),
+      backgroundColor: Colors.black,
+      body: _buildScannerBox(isPengawas, isLocked),
     );
   }
 

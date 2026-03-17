@@ -1,107 +1,138 @@
 import 'package:flutter/material.dart';
 
-import '../../core/services/auth_service.dart';
 import '../../core/theme/app_colors.dart';
-import '../toilet/toilet_scanner_page.dart';
-import '../toilet/toilet_status_page.dart';
-import 'scanner_page.dart';
-import 'status_page.dart';
+import '../toilet/toilet_menu_page.dart';
+import 'pulang_menu_page.dart';
 
 /// Container widget for verification and toilet-permit flows.
-class VerificationTab extends StatefulWidget {
+class VerificationTab extends StatelessWidget {
   final bool isShellActive;
 
   const VerificationTab({super.key, required this.isShellActive});
 
   @override
-  State<VerificationTab> createState() => _VerificationTabState();
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _MainCard(
+          title: 'Verifikasi Pulang',
+          subtitle: 'Scan tiket kepulangan & pantau status antrean pulang.',
+          icon: Icons.directions_walk,
+          color: AppColors.primary,
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const PulangMenuPage()),
+            );
+          },
+        ),
+        const SizedBox(height: 16),
+        _MainCard(
+          title: 'Izin Toilet',
+          subtitle: 'Validasi izin ke toilet & pantau durasi izin aktif.',
+          icon: Icons.wc,
+          color: AppColors.warning,
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ToiletMenuPage()),
+            );
+          },
+        ),
+      ],
+    );
+  }
 }
 
-class _VerificationTabState extends State<VerificationTab>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabController;
-  int _activeTabIndex = 0;
+class _MainCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
 
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 4, vsync: this);
-    _tabController.addListener(_handleTabChange);
-  }
-
-  void _handleTabChange() {
-    if (!mounted) return;
-    final nextIndex = _tabController.index;
-    if (_activeTabIndex != nextIndex) {
-      setState(() => _activeTabIndex = nextIndex);
-    }
-  }
-
-  @override
-  void dispose() {
-    _tabController.removeListener(_handleTabChange);
-    _tabController.dispose();
-    super.dispose();
-  }
+  const _MainCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final isPengawas = AuthService.isPengawas();
-
-    return Column(
-      children: [
-        Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.cardBorder),
-          ),
-          child: TabBar(
-            controller: _tabController,
-            isScrollable: true,
-            labelColor: AppColors.primary,
-            unselectedLabelColor: AppColors.textSecondary,
-            indicatorColor: AppColors.primary,
-            indicatorSize: TabBarIndicatorSize.tab,
-            dividerHeight: 0,
-            labelStyle: const TextStyle(
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: AppColors.cardBorder),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
             ),
-            unselectedLabelStyle: const TextStyle(
-              fontWeight: FontWeight.w500,
-              fontSize: 13,
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(icon, size: 36, color: color),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+              ],
             ),
-            tabs: const [
-              Tab(
-                icon: Icon(Icons.qr_code_scanner, size: 20),
-                text: 'Pulang Scan',
+            const SizedBox(height: 16),
+            Text(
+              subtitle,
+              style: const TextStyle(
+                fontSize: 14,
+                color: AppColors.textSecondary,
+                height: 1.4,
               ),
-              Tab(icon: Icon(Icons.list_alt, size: 20), text: 'Pulang Status'),
-              Tab(icon: Icon(Icons.wc, size: 20), text: 'Toilet Scan'),
-              Tab(icon: Icon(Icons.timer, size: 20), text: 'Toilet Status'),
-            ],
-          ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Text(
+                  'Buka Menu',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: color,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.arrow_forward, size: 18, color: color),
+              ],
+            ),
+          ],
         ),
-        Expanded(
-          child: TabBarView(
-            controller: _tabController,
-            children: [
-              ScannerTab(
-                isPengawas: isPengawas,
-                isActive: widget.isShellActive && _activeTabIndex == 0,
-              ),
-              const StatusTab(),
-              ToiletScannerTab(
-                isPengawas: isPengawas,
-                isActive: widget.isShellActive && _activeTabIndex == 2,
-              ),
-              const ToiletStatusTab(),
-            ],
-          ),
-        ),
-      ],
+      ),
     );
   }
 }

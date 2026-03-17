@@ -5,14 +5,14 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/wib_time.dart';
 import 'verification_service.dart';
 
-class StatusTab extends StatefulWidget {
-  const StatusTab({super.key});
+class StatusPage extends StatefulWidget {
+  const StatusPage({super.key});
 
   @override
-  State<StatusTab> createState() => _StatusTabState();
+  State<StatusPage> createState() => _StatusPageState();
 }
 
-class _StatusTabState extends State<StatusTab> {
+class _StatusPageState extends State<StatusPage> {
   List<Map<String, dynamic>> _logs = [];
   bool _isLoading = true;
   String? _error;
@@ -178,108 +178,122 @@ class _StatusTabState extends State<StatusTab> {
         .length;
     final pending = _logs.length - approved - waitingSecurity;
 
-    return RefreshIndicator(
-      onRefresh: _refresh,
-      color: AppColors.primary,
-      child: ListView(
-        children: [
-          // Stats row
-          _StatRow(
-            total: _logs.length,
-            approved: approved,
-            waitingSecurity: waitingSecurity,
-            pending: pending,
-          ),
-          const SizedBox(height: 16),
-          // Logs list
-          if (_logs.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(32),
-              alignment: Alignment.center,
-              child: Column(
-                children: [
-                  Icon(Icons.inbox, size: 48, color: AppColors.textHint),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Belum ada data verifikasi hari ini',
-                    style: TextStyle(color: AppColors.textSecondary),
-                  ),
-                ],
-              ),
-            )
-          else
-            ..._logs.map((log) {
-              final idKaryawan = log['id_karyawan'] ?? '';
-              final statusP = log['status_pengawas'] ?? 'pending';
-              final statusS = log['status_security'] ?? 'pending';
-              final info = _extractEmployeeInfo(idKaryawan);
-              final scanP = log['scanned_by_pengawas'] ?? '-';
-              final scanS = log['scanned_by_security'] ?? '-';
-              final timeP = _formatTimeLabel(
-                log['scan_time_pengawas']?.toString(),
-              );
-              final timeS = _formatTimeLabel(
-                log['scan_time_security']?.toString(),
-              );
-
-              return Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppColors.cardBorder),
-                ),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Status Pulang',
+          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+        ),
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
+        elevation: 0,
+        centerTitle: true,
+      ),
+      backgroundColor: AppColors.background,
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        color: AppColors.primary,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // Stats row
+            _StatRow(
+              total: _logs.length,
+              approved: approved,
+              waitingSecurity: waitingSecurity,
+              pending: pending,
+            ),
+            const SizedBox(height: 16),
+            // Logs list
+            if (_logs.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(32),
+                alignment: Alignment.center,
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            info,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
-                            ),
-                          ),
-                        ),
-                        _chip(
-                          _statusLabel(statusP, statusS),
-                          _statusColor(statusP, statusS),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    _scanInfoRow(
-                      label: 'Pengawas',
-                      by: scanP,
-                      time: timeP,
-                      color: statusP == 'approved'
-                          ? AppColors.success
-                          : AppColors.textHint,
-                      icon: statusP == 'approved'
-                          ? Icons.check_circle
-                          : Icons.pending,
-                    ),
-                    const SizedBox(height: 4),
-                    _scanInfoRow(
-                      label: 'Security',
-                      by: scanS,
-                      time: timeS,
-                      color: statusS == 'approved'
-                          ? AppColors.success
-                          : AppColors.textHint,
-                      icon: statusS == 'approved'
-                          ? Icons.check_circle
-                          : Icons.pending,
+                    Icon(Icons.inbox, size: 48, color: AppColors.textHint),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Belum ada data verifikasi hari ini',
+                      style: TextStyle(color: AppColors.textSecondary),
                     ),
                   ],
                 ),
-              );
-            }),
-        ],
+              )
+            else
+              ..._logs.map((log) {
+                final idKaryawan = log['id_karyawan'] ?? '';
+                final statusP = log['status_pengawas'] ?? 'pending';
+                final statusS = log['status_security'] ?? 'pending';
+                final info = _extractEmployeeInfo(idKaryawan);
+                final scanP = log['scanned_by_pengawas'] ?? '-';
+                final scanS = log['scanned_by_security'] ?? '-';
+                final timeP = _formatTimeLabel(
+                  log['scan_time_pengawas']?.toString(),
+                );
+                final timeS = _formatTimeLabel(
+                  log['scan_time_security']?.toString(),
+                );
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppColors.cardBorder),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              info,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ),
+                          _chip(
+                            _statusLabel(statusP, statusS),
+                            _statusColor(statusP, statusS),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      _scanInfoRow(
+                        label: 'Pengawas',
+                        by: scanP,
+                        time: timeP,
+                        color: statusP == 'approved'
+                            ? AppColors.success
+                            : AppColors.textHint,
+                        icon: statusP == 'approved'
+                            ? Icons.check_circle
+                            : Icons.pending,
+                      ),
+                      const SizedBox(height: 4),
+                      _scanInfoRow(
+                        label: 'Security',
+                        by: scanS,
+                        time: timeS,
+                        color: statusS == 'approved'
+                            ? AppColors.success
+                            : AppColors.textHint,
+                        icon: statusS == 'approved'
+                            ? Icons.check_circle
+                            : Icons.pending,
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        ),
       ),
     );
   }
