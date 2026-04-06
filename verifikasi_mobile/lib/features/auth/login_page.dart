@@ -16,14 +16,7 @@ class _LoginPageState extends State<LoginPage> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
-  UserRole? _selectedRole;
   String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _selectedRole = UserRole.pengawas;
-  }
 
   @override
   void dispose() {
@@ -40,10 +33,6 @@ class _LoginPageState extends State<LoginPage> {
       setState(() => _error = 'Username dan password harus diisi');
       return;
     }
-    if (_selectedRole == null) {
-      setState(() => _error = 'Pilih role terlebih dahulu');
-      return;
-    }
 
     setState(() {
       _isLoading = true;
@@ -51,11 +40,7 @@ class _LoginPageState extends State<LoginPage> {
     });
 
     try {
-      if (_selectedRole == UserRole.pengawas) {
-        await AuthService.loginPengawas(username, password);
-      } else {
-        await AuthService.loginSecurity(username, password);
-      }
+      await AuthService.login(username, password);
       await ToiletBackgroundWorkerService.syncWithCurrentUser();
 
       if (mounted) {
@@ -126,36 +111,7 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                 ),
 
-                const SizedBox(height: 36),
-
-                // Role selector
-                Row(
-                  children: [
-                    Expanded(
-                      child: _RoleButton(
-                        icon: Icons.badge,
-                        label: 'Pengawas',
-                        isSelected: _selectedRole == UserRole.pengawas,
-                        color: AppColors.pengawas,
-                        onTap: () =>
-                            setState(() => _selectedRole = UserRole.pengawas),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _RoleButton(
-                        icon: Icons.security,
-                        label: 'Security',
-                        isSelected: _selectedRole == UserRole.security,
-                        color: AppColors.security,
-                        onTap: () =>
-                            setState(() => _selectedRole = UserRole.security),
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 24),
+                const SizedBox(height: 48),
 
                 // Username
                 TextFormField(
@@ -260,56 +216,3 @@ class _LoginPageState extends State<LoginPage> {
   }
 }
 
-class _RoleButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool isSelected;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _RoleButton({
-    required this.icon,
-    required this.label,
-    required this.isSelected,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        decoration: BoxDecoration(
-          color: isSelected ? color.withAlpha(15) : AppColors.background,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: isSelected ? color : AppColors.cardBorder,
-            width: isSelected ? 2 : 1,
-          ),
-        ),
-        child: Column(
-          children: [
-            Icon(
-              icon,
-              size: 28,
-              color: isSelected ? color : AppColors.textHint,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                color: isSelected ? color : AppColors.textSecondary,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}

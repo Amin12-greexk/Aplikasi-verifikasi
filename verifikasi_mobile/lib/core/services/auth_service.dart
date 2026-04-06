@@ -31,18 +31,8 @@ class AuthService {
     }
   }
 
-  // Login untuk pengawas
-  static Future<void> loginPengawas(String username, String password) async {
-    await _login(username, password, UserRole.pengawas);
-  }
-
-  // Login untuk security
-  static Future<void> loginSecurity(String username, String password) async {
-    await _login(username, password, UserRole.security);
-  }
-
-  // Internal login function — uses active server profile
-  static Future<void> _login(String username, String password, UserRole role) async {
+  // Login
+  static Future<void> login(String username, String password) async {
     try {
       final response = await http.post(
         Uri.parse('${ServerConfig.baseUrl}/auth/login'),
@@ -50,7 +40,6 @@ class AuthService {
         body: jsonEncode({
           'username': username,
           'password': password,
-          'role': role == UserRole.pengawas ? 'pengawas' : 'security',
         }),
       );
 
@@ -58,7 +47,15 @@ class AuthService {
         final data = jsonDecode(response.body);
         _token = data['token'];
         _user = data['username'];
-        _role = role;
+        final roleStr = data['role']?.toString().toLowerCase();
+
+        if (roleStr == 'pengawas') {
+          _role = UserRole.pengawas;
+        } else if (roleStr == 'security') {
+          _role = UserRole.security;
+        } else {
+          throw Exception('Unknown role: $roleStr');
+        }
 
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(_tokenKey, _token!);

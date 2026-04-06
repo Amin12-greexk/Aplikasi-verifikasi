@@ -443,7 +443,6 @@ Future<Router> buildRouter(Database db) async {
       final body = jsonDecode(await req.readAsString());
       final username = body['username']?.toString().trim();
       final password = body['password']?.toString().trim();
-      final role = body['role']?.toString().trim();
 
       if (username == null || username.isEmpty) {
         return bad('Username wajib diisi');
@@ -451,26 +450,23 @@ Future<Router> buildRouter(Database db) async {
       if (password == null || password.isEmpty) {
         return bad('Password wajib diisi');
       }
-      if (role == null || role.isEmpty) return bad('Role wajib diisi');
-      if (role != 'pengawas' && role != 'security') {
-        return bad('Role tidak valid');
-      }
 
       final rows = db.select(
-        'SELECT * FROM users WHERE username = ? AND password = ? AND role = ?',
-        [username, password, role],
+        'SELECT * FROM users WHERE username = ? AND password = ?',
+        [username, password],
       );
 
       if (rows.isEmpty) return bad('Username atau password salah', code: 401);
 
       final user = rows.first;
-      final token = _generateToken(username, role);
+      final role = user['role']?.toString();
+      final token = _generateToken(username, role ?? '');
 
       return ok({
         'message': 'Login berhasil',
         'token': token,
         'username': user['username'],
-        'role': user['role'],
+        'role': role,
       });
     } catch (e) {
       return bad('Error: $e', code: 500);
