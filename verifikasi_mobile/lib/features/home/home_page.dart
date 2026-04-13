@@ -480,83 +480,84 @@ class _HomePageState extends State<HomePage> {
 
           const SizedBox(height: 16),
 
-          // Attendance summary
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.cardBorder),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: attendanceStatusColor.withAlpha(20),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    Icons.fingerprint,
-                    size: 20,
-                    color: attendanceStatusColor,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Absensi Hari Ini',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        attendanceSubtitle,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: _attendanceConnected
-                              ? AppColors.textSecondary
-                              : AppColors.warning,
-                        ),
-                      ),
-                      if (_attendanceCheckedAt != null)
-                        Text(
-                          'Update: ${_formatClock(_attendanceCheckedAt!)}',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textHint,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: attendanceStatusColor.withAlpha(20),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    attendanceStatusLabel,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
+          // Attendance summary (Security only)
+          if (!isPengawas)
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.cardBorder),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: attendanceStatusColor.withAlpha(20),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      Icons.fingerprint,
+                      size: 20,
                       color: attendanceStatusColor,
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Absensi Hari Ini',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          attendanceSubtitle,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: _attendanceConnected
+                                ? AppColors.textSecondary
+                                : AppColors.warning,
+                          ),
+                        ),
+                        if (_attendanceCheckedAt != null)
+                          Text(
+                            'Update: ${_formatClock(_attendanceCheckedAt!)}',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textHint,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: attendanceStatusColor.withAlpha(20),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      attendanceStatusLabel,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: attendanceStatusColor,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
         ],
       ),
     );

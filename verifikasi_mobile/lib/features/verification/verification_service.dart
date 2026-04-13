@@ -173,6 +173,16 @@ class VerificationService {
     return data.containsKey('status_pengawas') ? _normalizeLog(data) : data;
   }
 
+  /// Fetch single log status by ID
+  static Future<Map<String, dynamic>> fetchStatus(String id) async {
+    final response = await BaseApiClient.get('/status/${Uri.encodeComponent(id)}');
+    final data = BaseApiClient.tryJson(response.body);
+    if (response.statusCode >= 400) {
+      throw Exception(data['error'] ?? 'Gagal mengambil status');
+    }
+    return _normalizeLog(data);
+  }
+
   /// Check server connectivity
   static Future<bool> checkConnectivity() async {
     return BaseApiClient.checkConnectivity();

@@ -27,25 +27,27 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
   static const double _scanAreaRatio = 0.96;
   static const double _minScanAreaSize = 220.0;
   static const Duration _sameCodeCooldown = Duration(seconds: 4);
+
   final MobileScannerController _controller = MobileScannerController(
     detectionSpeed: DetectionSpeed.noDuplicates,
     detectionTimeoutMs: 250,
     facing: CameraFacing.back,
     formats: [BarcodeFormat.qrCode],
-    cameraResolution: Size(1280, 720),
+    cameraResolution: const Size(1280, 720),
     useNewCameraSelector: false,
     autoStart: false,
   );
+
   bool _isProcessing = false;
   String? _lastResult;
   String? _lastStatus;
   Color? _lastColor;
+  String? _lastScannedId;
+  DateTime? _lastScannedAt;
   Timer? _clockTimer;
   final ValueNotifier<DateTime> _currentTimeNotifier = ValueNotifier(
     WibTime.now(),
   );
-  String? _lastScannedId;
-  DateTime? _lastScannedAt;
   double _zoomLevel = 0.25;
   double _baseZoomLevel = 0.25;
   AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
@@ -56,7 +58,10 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _startDeviceClock();
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      _currentTimeNotifier.value = WibTime.now();
+    });
     _flushOfflineQueue();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _syncCameraState();
@@ -237,16 +242,7 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
   Future<bool> _checkPengawasApproval(String normalizedIdKaryawan) async {
     try {
       final lookup = normalizedIdKaryawan.trim();
-      final lookupPin = _extractBarcodeInfo(lookup)['PIN']?.trim() ?? '';
-      final logs = await VerificationService.fetchLogs();
-      final log = logs.firstWhere((l) {
-        final logId = l['id_karyawan']?.toString().trim() ?? '';
-        if (logId == lookup) return true;
-        if (lookupPin.isEmpty) return false;
-        if (logId == lookupPin) return true;
-        final logPin = _extractBarcodeInfo(logId)['PIN']?.trim() ?? '';
-        return logPin.isNotEmpty && logPin == lookupPin;
-      }, orElse: () => {});
+      final log = await VerificationService.fetchStatus(lookup);
       if (log.isNotEmpty) {
         final statusPengawas = log['status_pengawas'];
         return VerificationService.isApprovedStatus(statusPengawas);

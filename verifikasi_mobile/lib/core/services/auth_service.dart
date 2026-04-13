@@ -3,7 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import '../config/config.dart';
 
-enum UserRole { pengawas, security }
+enum UserRole { pengawas, security, manager }
 
 class AuthService {
   static const String _tokenKey = 'auth_token';
@@ -53,6 +53,8 @@ class AuthService {
           _role = UserRole.pengawas;
         } else if (roleStr == 'security') {
           _role = UserRole.security;
+        } else if (roleStr == 'manager') {
+          _role = UserRole.manager;
         } else {
           throw Exception('Unknown role: $roleStr');
         }
@@ -87,4 +89,7 @@ class AuthService {
 
   // Check if user has security role
   static bool isSecurity() => _role == UserRole.security;
+
+  // Check if user has manager role
+  static bool isManager() => _role == UserRole.manager;
 }

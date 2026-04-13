@@ -452,7 +452,7 @@ Future<Router> buildRouter(Database db) async {
       }
 
       final rows = db.select(
-        'SELECT * FROM users WHERE username = ? AND password = ?',
+        'SELECT id, username, role FROM users WHERE username = ? AND password = ?',
         [username, password],
       );
 
@@ -492,8 +492,6 @@ Future<Router> buildRouter(Database db) async {
         return null;
       });
 
-      final nowIso = _formatWibIso(_nowUtc());
-      saveToHistory(id, 'ACC', 'PENDING', username, null, nowIso, null);
       final row = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
         id,
       ]).first;
@@ -529,15 +527,6 @@ Future<Router> buildRouter(Database db) async {
         return null;
       });
 
-      saveToHistory(
-        id,
-        'ACC',
-        'ACC',
-        row['pengawas_scanned_by']?.toString(),
-        username,
-        row['pengawas_scanned_at']?.toString(),
-        nowIso,
-      );
       final updated = db.select(
         'SELECT * FROM log_pulang WHERE id_karyawan=?',
         [id],
@@ -597,12 +586,6 @@ Future<Router> buildRouter(Database db) async {
         db.select('SELECT * FROM toilet_permit WHERE id_karyawan=?', [
           id,
         ]).first,
-      );
-      _saveToiletPermitHistory(
-        db,
-        row,
-        now: now,
-        permitState: 'WAITING_SECURITY',
       );
 
       return ok({
@@ -664,7 +647,6 @@ Future<Router> buildRouter(Database db) async {
           id,
         ]).first,
       );
-      _saveToiletPermitHistory(db, updated, now: now, permitState: 'ACTIVE');
 
       return ok({
         ..._mapToiletPermitRow(updated, now: now),
@@ -704,7 +686,14 @@ Future<Router> buildRouter(Database db) async {
   });
 
   Response logsHandler(Request req) {
-    final rows = db.select('SELECT * FROM log_pulang ORDER BY rowid DESC');
+    final params = req.url.queryParameters;
+    final limit = int.tryParse(params['limit'] ?? '100') ?? 100;
+    final offset = int.tryParse(params['offset'] ?? '0') ?? 0;
+
+    final rows = db.select(
+      'SELECT * FROM log_pulang ORDER BY rowid DESC LIMIT ? OFFSET ?',
+      [limit, offset],
+    );
     final list = rows
         .map(
           (r) => {
@@ -719,17 +708,22 @@ Future<Router> buildRouter(Database db) async {
           },
         )
         .toList();
-    return ok({'logs': list});
+    return ok({'logs': list, 'limit': limit, 'offset': offset});
   }
 
   Response toiletPermitHandler(Request req) {
+    final params = req.url.queryParameters;
+    final limit = int.tryParse(params['limit'] ?? '100') ?? 100;
+    final offset = int.tryParse(params['offset'] ?? '0') ?? 0;
+
     final rows = db.select(
-      'SELECT * FROM toilet_permit ORDER BY approved_at DESC',
+      'SELECT * FROM toilet_permit ORDER BY approved_at DESC LIMIT ? OFFSET ?',
+      [limit, offset],
     );
     final list = rows
         .map((r) => _mapToiletPermitRow(Map<String, Object?>.from(r)))
         .toList();
-    return ok({'permits': list});
+    return ok({'permits': list, 'limit': limit, 'offset': offset});
   }
 
   Response toiletPermitAlertsHandler(Request req) {
@@ -810,6 +804,66 @@ Future<Router> buildRouter(Database db) async {
       );
       final dates = rows.map((r) => r['tanggal']).toList();
       return ok({'dates': dates});
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
+
+  r.get('/stats/dashboard', (Request req) {
+    try {
+      final now = _nowUtc();
+      final todayStr = _formatDate(now);
+
+      // Today's summary
+      final todayLogs = db.select(
+        'SELECT COUNT(*) as total, '
+        'SUM(CASE WHEN status_pengawas = "ACC" THEN 1 ELSE 0 END) as pengawas_acc, '
+        'SUM(CASE WHEN status_security = "ACC" THEN 1 ELSE 0 END) as security_acc '
+        'FROM log_pulang',
+      ).first;
+
+      final todayToilet = db.select(
+        'SELECT COUNT(*) as count FROM toilet_permit',
+      ).first['count'];
+
+      // Top 5 Toilet users today
+      final topToiletToday = db.select(
+        'SELECT id_karyawan, COUNT(*) as count '
+        'FROM toilet_permit_history '
+        'WHERE tanggal = ? '
+        'GROUP BY id_karyawan '
+        'ORDER BY count DESC LIMIT 5',
+        [todayStr],
+      );
+
+      // Top 5 Toilet users all time
+      final topToiletAllTime = db.select(
+        'SELECT id_karyawan, COUNT(*) as count '
+        'FROM toilet_permit_history '
+        'GROUP BY id_karyawan '
+        'ORDER BY count DESC LIMIT 5',
+      );
+
+      // Monthly toilet usage (last 7 days)
+      final last7Days = db.select(
+        'SELECT tanggal, COUNT(*) as count '
+        'FROM toilet_permit_history '
+        'WHERE tanggal >= date("now", "-7 days") '
+        'GROUP BY tanggal '
+        'ORDER BY tanggal ASC',
+      );
+
+      return ok({
+        'summary': {
+          'today_logs': todayLogs['total'],
+          'pengawas_acc': todayLogs['pengawas_acc'],
+          'security_acc': todayLogs['security_acc'],
+          'today_toilet_permits': todayToilet,
+        },
+        'top_toilet_today': topToiletToday,
+        'top_toilet_all_time': topToiletAllTime,
+        'last_7_days_usage': last7Days,
+      });
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
@@ -963,8 +1017,8 @@ Future<Router> buildRouter(Database db) async {
         return bad('Password wajib diisi');
       }
       if (role == null || role.isEmpty) return bad('Role wajib diisi');
-      if (role != 'pengawas' && role != 'security') {
-        return bad('Role hanya bisa pengawas atau security');
+      if (role != 'pengawas' && role != 'security' && role != 'manager') {
+        return bad('Role hanya bisa pengawas, security, atau manager');
       }
 
       db.execute(
@@ -995,8 +1049,8 @@ Future<Router> buildRouter(Database db) async {
         return bad('Password wajib diisi');
       }
       if (role == null || role.isEmpty) return bad('Role wajib diisi');
-      if (role != 'pengawas' && role != 'security') {
-        return bad('Role hanya bisa pengawas atau security');
+      if (role != 'pengawas' && role != 'security' && role != 'manager') {
+        return bad('Role hanya bisa pengawas, security, atau manager');
       }
 
       db.execute('UPDATE users SET password=?, role=? WHERE id=?', [

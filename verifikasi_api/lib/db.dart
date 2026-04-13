@@ -15,7 +15,7 @@ Future<Database> initDb(String path) async {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('pengawas', 'security')),
+      role TEXT NOT NULL CHECK(role IN ('pengawas', 'security', 'manager')),
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   ''');
@@ -56,6 +56,16 @@ Future<Database> initDb(String path) async {
   ''');
 
   db.execute('''
+    CREATE INDEX IF NOT EXISTS idx_log_pulang_history_id_karyawan 
+    ON log_pulang_history(id_karyawan);
+  ''');
+
+  db.execute('''
+    CREATE INDEX IF NOT EXISTS idx_log_pulang_status 
+    ON log_pulang(status_pengawas, status_security);
+  ''');
+
+  db.execute('''
     CREATE TABLE IF NOT EXISTS toilet_permit (
       id_karyawan TEXT PRIMARY KEY,
       duration_minutes INTEGER NOT NULL DEFAULT 10,
@@ -89,6 +99,11 @@ Future<Database> initDb(String path) async {
   db.execute('''
     CREATE INDEX IF NOT EXISTS idx_toilet_permit_history_tanggal
     ON toilet_permit_history(tanggal);
+  ''');
+
+  db.execute('''
+    CREATE INDEX IF NOT EXISTS idx_toilet_permit_history_id_karyawan
+    ON toilet_permit_history(id_karyawan);
   ''');
 
   // Migration: Add columns if they do not exist.
@@ -255,6 +270,14 @@ Future<Database> initDb(String path) async {
       'security',
       'security123',
       'security',
+    ]);
+  } catch (_) {}
+
+  try {
+    db.execute('INSERT INTO users(username, password, role) VALUES(?, ?, ?)', [
+      'manager',
+      'manager123',
+      'manager',
     ]);
   } catch (_) {}
 

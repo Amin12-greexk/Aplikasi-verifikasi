@@ -20,6 +20,11 @@ class AppColors {
   static const Color securityLight = Color(0xFF66BB6A);
   static const Color securitySurface = Color(0xFFE8F5E9);
 
+  // Manager purple accent
+  static const Color manager = Color(0xFF6A1B9A);
+  static const Color managerLight = Color(0xFF9C27B0);
+  static const Color managerSurface = Color(0xFFF3E5F5);
+
   // Status colors
   static const Color success = Color(0xFF2E7D32);
   static const Color warning = Color(0xFFF9A825);

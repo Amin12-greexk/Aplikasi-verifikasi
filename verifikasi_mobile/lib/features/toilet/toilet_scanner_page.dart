@@ -26,7 +26,7 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
   static const double _scanAreaRatio = 0.96;
   static const double _minScanAreaSize = 220.0;
   static const Duration _sameCodeCooldown = Duration(seconds: 4);
-  static const List<int> _durationOptions = [5, 10, 15, 20, 30];
+  static const List<int> _durationOptions = [5, 10, 20];
 
   final MobileScannerController _controller = MobileScannerController(
     detectionSpeed: DetectionSpeed.noDuplicates,
@@ -585,13 +585,18 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
                 Positioned(top: 16, right: 16, child: _corner(1)),
                 Positioned(bottom: 16, right: 16, child: _corner(2)),
                 Positioned(bottom: 16, left: 16, child: _corner(3)),
-                Positioned(top: 20, left: 20, child: _buildClockChip()),
-                if (isPengawas)
-                  Positioned(
-                    top: 20,
-                    right: 20,
-                    child: _buildDurationChip(isLocked),
+                Positioned(
+                  top: 20,
+                  left: 20,
+                  right: 20,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildClockChip(),
+                      if (isPengawas) _buildDurationSelection(isLocked),
+                    ],
                   ),
+                ),
                 if (_lastResult != null)
                   Positioned(
                     left: 16,
@@ -660,55 +665,42 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     );
   }
 
-  Widget _buildDurationChip(bool isLocked) {
-    return Material(
-      color: Colors.transparent,
-      child: PopupMenuButton<int>(
-        tooltip: 'Pilih Durasi Izin',
-        initialValue: _selectedDuration,
-        enabled: !isLocked,
-        padding: EdgeInsets.zero,
-        position: PopupMenuPosition.under,
-        onSelected: (value) => setState(() => _selectedDuration = value),
-        itemBuilder: (context) => _durationOptions
-            .map(
-              (option) => PopupMenuItem<int>(
-                value: option,
-                child: Text('$option menit'),
-              ),
-            )
-            .toList(),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.black.withAlpha(isLocked ? 155 : 115),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: isLocked
-                  ? Colors.white.withAlpha(70)
-                  : AppColors.pengawas.withAlpha(95),
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.timer_outlined,
-                size: 16,
-                color: isLocked ? Colors.white : AppColors.pengawasSurface,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                '${_selectedDuration}m',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
+  Widget _buildDurationSelection(bool isLocked) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(115),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withAlpha(45)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: _durationOptions.map((duration) {
+          final isSelected = _selectedDuration == duration;
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: InkWell(
+              onTap: isLocked ? null : () => setState(() => _selectedDuration = duration),
+              borderRadius: BorderRadius.circular(10),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: isSelected ? AppColors.pengawas : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '${duration}m',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                    color: Colors.white,
+                  ),
                 ),
               ),
-            ],
-          ),
-        ),
+            ),
+          );
+        }).toList(),
       ),
     );
   }

@@ -9,8 +9,8 @@ import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
 import 'features/attendance/attendance_page.dart';
 import 'features/auth/login_page.dart';
-import 'features/history/history_page.dart';
 import 'features/home/home_page.dart';
+import 'features/home/manager_dashboard_page.dart';
 import 'features/more/more_page.dart';
 import 'features/toilet/toilet_background_worker_service.dart';
 import 'features/toilet/toilet_expiry_monitor_service.dart';
@@ -32,23 +32,29 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    Widget getHome() {
+      if (!AuthService.isLoggedIn) return const LoginPage();
+      if (AuthService.isManager()) return const ManagerDashboardPage();
+      return const HomeShell();
+    }
+
     return MaterialApp(
-      title: 'TEI VERIVIKASI',
+      title: 'TEI VERIFIKASI',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
-      home: AuthService.isLoggedIn ? const HomeShell() : const LoginPage(),
+      home: getHome(),
       routes: {
-        '/home': (context) => const HomeShell(),
+        '/home': (context) => AuthService.isManager() ? const ManagerDashboardPage() : const HomeShell(),
         '/login': (context) => const LoginPage(),
       },
     );
   }
 }
 
-/// Main shell with 5-tab bottom navigation.
+/// Main shell with bottom navigation.
 /// Role-based visibility:
-///   Pengawas: Beranda, Verifikasi, Absensi, Riwayat, Lainnya
-///   Security: Beranda, Verifikasi, Riwayat, Lainnya (no Absensi)
+///   Pengawas: Beranda, Verifikasi, Absensi, Lainnya
+///   Security: Beranda, Verifikasi, Lainnya (no Absensi)
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -122,13 +128,11 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
             const HomePage(),
             VerificationTab(isShellActive: _index == 1),
             const AttendancePage(),
-            const HistoryPage(),
             const MorePage(),
           ]
         : <Widget>[
             const HomePage(),
             VerificationTab(isShellActive: _index == 1),
-            const HistoryPage(),
             const MorePage(),
           ];
     return IndexedStack(index: _index, children: tabs);
@@ -153,11 +157,6 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
           label: 'Absensi',
         ),
         NavigationDestination(
-          icon: const Icon(Icons.history_outlined),
-          selectedIcon: const Icon(Icons.history),
-          label: 'Riwayat',
-        ),
-        NavigationDestination(
           icon: const Icon(Icons.more_horiz_outlined),
           selectedIcon: const Icon(Icons.more_horiz),
           label: 'Lainnya',
@@ -174,11 +173,6 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
           icon: const Icon(Icons.qr_code_scanner_outlined),
           selectedIcon: const Icon(Icons.qr_code_scanner),
           label: 'Verifikasi',
-        ),
-        NavigationDestination(
-          icon: const Icon(Icons.history_outlined),
-          selectedIcon: const Icon(Icons.history),
-          label: 'Riwayat',
         ),
         NavigationDestination(
           icon: const Icon(Icons.more_horiz_outlined),
