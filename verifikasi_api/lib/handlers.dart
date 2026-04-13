@@ -828,20 +828,20 @@ Future<Router> buildRouter(Database db) async {
 
       // Top 5 Toilet users today
       final topToiletToday = db.select(
-        'SELECT id_karyawan, COUNT(*) as count '
+        'SELECT id_karyawan, COUNT(*) as count, SUM(duration_minutes) as total_minutes '
         'FROM toilet_permit_history '
         'WHERE tanggal = ? '
         'GROUP BY id_karyawan '
-        'ORDER BY count DESC LIMIT 5',
+        'ORDER BY count DESC LIMIT 10',
         [todayStr],
       );
 
       // Top 5 Toilet users all time
       final topToiletAllTime = db.select(
-        'SELECT id_karyawan, COUNT(*) as count '
+        'SELECT id_karyawan, COUNT(*) as count, SUM(duration_minutes) as total_minutes '
         'FROM toilet_permit_history '
         'GROUP BY id_karyawan '
-        'ORDER BY count DESC LIMIT 5',
+        'ORDER BY count DESC LIMIT 10',
       );
 
       // Monthly toilet usage (last 7 days)

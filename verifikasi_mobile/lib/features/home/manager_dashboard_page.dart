@@ -208,17 +208,50 @@ class _ManagerDashboardPageState extends State<ManagerDashboardPage> {
     );
   }
 
+  String _extractName(String raw) {
+    if (!raw.contains('|')) return raw;
+    try {
+      final parts = raw.split('|');
+      for (var p in parts) {
+        if (p.toLowerCase().contains('nama:')) {
+          return p.split(':').last.trim();
+        }
+      }
+    } catch (_) {}
+    return raw;
+  }
+
+  String _extractPin(String raw) {
+    if (!raw.contains('|')) return '';
+    try {
+      final parts = raw.split('|');
+      for (var p in parts) {
+        if (p.toLowerCase().contains('pin:')) {
+          return p.split(':').last.trim();
+        }
+      }
+    } catch (_) {}
+    return '';
+  }
+
   Widget _buildToiletList(List<dynamic> items) {
     if (items.isEmpty) {
       return Container(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           color: AppColors.surface,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: AppColors.cardBorder),
         ),
-        child: const Center(
-          child: Text('Tidak ada data'),
+        child: Column(
+          children: [
+            Icon(Icons.inbox_outlined, size: 40, color: AppColors.textHint),
+            const SizedBox(height: 8),
+            const Text(
+              'Tidak ada data scan toilet',
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
+          ],
         ),
       );
     }
@@ -243,36 +276,77 @@ class _ManagerDashboardPageState extends State<ManagerDashboardPage> {
         separatorBuilder: (context, index) => const Divider(height: 1),
         itemBuilder: (context, index) {
           final item = items[index];
-          final id = item['id_karyawan'] ?? 'Unknown';
+          final rawId = item['id_karyawan']?.toString() ?? 'Unknown';
+          final name = _extractName(rawId);
+          final pin = _extractPin(rawId);
           final count = item['count'] ?? 0;
+          final totalMinutes = item['total_minutes'] ?? 0;
           
           return ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             leading: CircleAvatar(
-              backgroundColor: index == 0 ? AppColors.error.withAlpha(40) : AppColors.background,
+              backgroundColor: index < 3 ? AppColors.error.withAlpha(20) : AppColors.background,
               child: Text(
                 '${index + 1}',
                 style: TextStyle(
-                  color: index == 0 ? AppColors.error : AppColors.textPrimary,
+                  color: index < 3 ? AppColors.error : AppColors.textPrimary,
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ),
             title: Text(
-              id,
-              style: const TextStyle(fontWeight: FontWeight.w600),
+              name,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (pin.isNotEmpty)
+                  Text(
+                    'PIN: $pin',
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    const Icon(Icons.timer_outlined, size: 12, color: AppColors.textHint),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Total: $totalMinutes menit',
+                      style: const TextStyle(fontSize: 11, color: AppColors.info, fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                ),
+              ],
             ),
             trailing: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: AppColors.error.withAlpha(20),
-                borderRadius: BorderRadius.circular(20),
+                color: AppColors.error.withAlpha(15),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.error.withAlpha(30)),
               ),
-              child: Text(
-                '$count kali',
-                style: const TextStyle(
-                  color: AppColors.error,
-                  fontWeight: FontWeight.bold,
-                ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '$count',
+                    style: const TextStyle(
+                      color: AppColors.error,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const Text(
+                    'kali',
+                    style: TextStyle(
+                      color: AppColors.error,
+                      fontSize: 9,
+                    ),
+                  ),
+                ],
               ),
             ),
           );
