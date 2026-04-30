@@ -6,6 +6,7 @@ import '../../core/services/auth_service.dart';
 import '../../core/services/offline_queue.dart';
 import '../../core/theme/app_colors.dart';
 import '../attendance/attendance_service.dart';
+import '../toilet/toilet_permit_service.dart';
 import '../verification/verification_service.dart';
 
 /// Dashboard beranda with summary cards.
@@ -29,6 +30,8 @@ class _HomePageState extends State<HomePage> {
   int _attendancePinsChecked = 0;
   int _attendanceTodayCount = 0;
   DateTime? _attendanceCheckedAt;
+  List<Map<String, dynamic>> _expiredToiletAlerts = <Map<String, dynamic>>[];
+  final Set<String> _returningToiletIds = <String>{};
   bool _isLoading = true;
   bool _isAttendanceLoading = true;
   int _activeLoadId = 0;
@@ -55,6 +58,9 @@ class _HomePageState extends State<HomePage> {
     _attendancePinsChecked = cache.attendancePinsChecked;
     _attendanceTodayCount = cache.attendanceTodayCount;
     _attendanceCheckedAt = cache.attendanceCheckedAt;
+    _expiredToiletAlerts = List<Map<String, dynamic>>.from(
+      cache.expiredToiletAlerts,
+    );
     _isLoading = false;
     _isAttendanceLoading = false;
     return true;
@@ -70,6 +76,9 @@ class _HomePageState extends State<HomePage> {
       attendancePinsChecked: _attendancePinsChecked,
       attendanceTodayCount: _attendanceTodayCount,
       attendanceCheckedAt: _attendanceCheckedAt,
+      expiredToiletAlerts: List<Map<String, dynamic>>.from(
+        _expiredToiletAlerts,
+      ),
       fetchedAt: DateTime.now(),
     );
   }
@@ -104,6 +113,16 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<List<Map<String, dynamic>>> _safeFetchExpiredToiletAlerts() async {
+    try {
+      return await ToiletPermitService.fetchExpiredAlerts().timeout(
+        const Duration(seconds: 5),
+      );
+    } catch (_) {
+      return <Map<String, dynamic>>[];
+    }
+  }
+
   Future<void> _loadDashboard({bool showLoader = true}) async {
     final loadId = ++_activeLoadId;
 
@@ -118,6 +137,7 @@ class _HomePageState extends State<HomePage> {
       _safeFetchLogs(),
       _safeGetPendingQueue(),
       _safeCheckAttendanceApi(),
+      _safeFetchExpiredToiletAlerts(),
     ]);
 
     if (!mounted || loadId != _activeLoadId) return;
@@ -125,6 +145,9 @@ class _HomePageState extends State<HomePage> {
     final logs = List<Map<String, dynamic>>.from(results[0] as List);
     final offline = List<Map<String, dynamic>>.from(results[1] as List);
     final attendanceConnected = results[2] as bool;
+    final expiredToiletAlerts = List<Map<String, dynamic>>.from(
+      results[3] as List,
+    );
 
     final pins = logs
         .map((l) => _extractPinFromId(l['id_karyawan']?.toString() ?? ''))
@@ -148,6 +171,7 @@ class _HomePageState extends State<HomePage> {
             .length;
         _pending = _totalLogs - _approved;
         _offlineCount = offline.length;
+        _expiredToiletAlerts = expiredToiletAlerts;
         _attendanceConnected = attendanceConnected;
         _attendancePinsChecked = pinsToCheck.length;
         if (!shouldLoadAttendance) {
@@ -233,6 +257,92 @@ class _HomePageState extends State<HomePage> {
     final h = value.hour.toString().padLeft(2, '0');
     final m = value.minute.toString().padLeft(2, '0');
     return '$h:$m';
+  }
+
+  String _formatNullableClock(String? raw) {
+    final parsed = ToiletPermitService.parseDateTime(raw);
+    if (parsed == null) return '-';
+    return _formatClock(parsed.toLocal());
+  }
+
+  String _employeeLabel(String rawId) {
+    final raw = rawId.trim();
+    if (raw.isEmpty) return 'Mitra';
+
+    String valueFor(String key) {
+      final parts = raw.split('|').map((part) => part.trim());
+      for (final part in parts) {
+        final separator = part.indexOf(':');
+        if (separator <= 0) continue;
+        final currentKey = part.substring(0, separator).trim().toLowerCase();
+        if (currentKey != key.toLowerCase()) continue;
+        return part.substring(separator + 1).trim();
+      }
+      return '';
+    }
+
+    final pin = valueFor('PIN');
+    final nama = valueFor('Nama');
+    if (nama.isNotEmpty && pin.isNotEmpty) return '$nama (PIN: $pin)';
+    if (nama.isNotEmpty) return nama;
+    if (pin.isNotEmpty) return 'PIN: $pin';
+    return raw;
+  }
+
+  Future<void> _markToiletReturned(Map<String, dynamic> alert) async {
+    final idKaryawan = alert['id_karyawan']?.toString() ?? '';
+    if (idKaryawan.trim().isEmpty || _returningToiletIds.contains(idKaryawan)) {
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Mitra sudah kembali?'),
+        content: Text(
+          'Tandai ${_employeeLabel(idKaryawan)} sudah kembali dari toilet.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Sudah Kembali'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _returningToiletIds.add(idKaryawan));
+
+    try {
+      await ToiletPermitService.markReturned(idKaryawan);
+      if (!mounted) return;
+
+      setState(() {
+        _expiredToiletAlerts.removeWhere(
+          (item) => item['id_karyawan']?.toString() == idKaryawan,
+        );
+      });
+      _saveCache();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Mitra ditandai sudah kembali')),
+      );
+      await _loadDashboard(showLoader: false);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _returningToiletIds.remove(idKaryawan));
+      }
+    }
   }
 
   @override
@@ -480,6 +590,10 @@ class _HomePageState extends State<HomePage> {
 
           const SizedBox(height: 16),
 
+          _buildToiletExpiredPanel(),
+
+          const SizedBox(height: 16),
+
           // Attendance summary (Security only)
           if (!isPengawas)
             Container(
@@ -602,6 +716,164 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+
+  Widget _buildToiletExpiredPanel() {
+    final hasAlerts = _expiredToiletAlerts.isNotEmpty;
+    final alerts = _expiredToiletAlerts.take(3).toList();
+    final isSecurity = AuthService.isSecurity();
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: hasAlerts ? AppColors.error.withAlpha(10) : AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: hasAlerts
+              ? AppColors.error.withAlpha(40)
+              : AppColors.cardBorder,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: hasAlerts
+                      ? AppColors.error.withAlpha(18)
+                      : AppColors.success.withAlpha(18),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  hasAlerts ? Icons.timer_off : Icons.timer_outlined,
+                  size: 20,
+                  color: hasAlerts ? AppColors.error : AppColors.success,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Izin Toilet Habis',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      hasAlerts
+                          ? '${_expiredToiletAlerts.length} mitra melewati batas waktu.'
+                          : 'Tidak ada izin toilet yang melewati batas waktu.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: hasAlerts
+                            ? AppColors.error
+                            : AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Refresh',
+                onPressed: () => _loadDashboard(showLoader: false),
+                icon: const Icon(Icons.refresh, size: 20),
+                color: hasAlerts ? AppColors.error : AppColors.textSecondary,
+              ),
+            ],
+          ),
+          if (hasAlerts) ...[
+            const SizedBox(height: 10),
+            for (final alert in alerts)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.warning_amber_rounded,
+                      size: 18,
+                      color: AppColors.error,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _employeeLabel(
+                              alert['id_karyawan']?.toString() ?? '',
+                            ),
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            'Habis: ${_formatNullableClock(alert['expires_at']?.toString())}',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (isSecurity) ...[
+                      const SizedBox(width: 8),
+                      _returnButton(alert),
+                    ],
+                  ],
+                ),
+              ),
+            if (_expiredToiletAlerts.length > alerts.length)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  '+${_expiredToiletAlerts.length - alerts.length} lainnya',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.error,
+                  ),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _returnButton(Map<String, dynamic> alert) {
+    final idKaryawan = alert['id_karyawan']?.toString() ?? '';
+    final isReturning = _returningToiletIds.contains(idKaryawan);
+
+    return FilledButton.icon(
+      onPressed: isReturning ? null : () => _markToiletReturned(alert),
+      icon: isReturning
+          ? const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.assignment_turned_in, size: 16),
+      label: const Text('Kembali'),
+      style: FilledButton.styleFrom(
+        backgroundColor: AppColors.success,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
 }
 
 class _DashboardCache {
@@ -613,6 +885,7 @@ class _DashboardCache {
   final int attendancePinsChecked;
   final int attendanceTodayCount;
   final DateTime? attendanceCheckedAt;
+  final List<Map<String, dynamic>> expiredToiletAlerts;
   final DateTime fetchedAt;
 
   const _DashboardCache({
@@ -624,6 +897,7 @@ class _DashboardCache {
     required this.attendancePinsChecked,
     required this.attendanceTodayCount,
     required this.attendanceCheckedAt,
+    required this.expiredToiletAlerts,
     required this.fetchedAt,
   });
 }

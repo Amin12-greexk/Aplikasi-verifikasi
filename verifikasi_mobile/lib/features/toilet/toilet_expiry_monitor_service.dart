@@ -58,12 +58,14 @@ class ToiletExpiryMonitorService {
           permit['id_karyawan']?.toString() ?? '',
         );
 
-        await LocalNotificationService.showToiletExpired(
+        final shown = await LocalNotificationService.showToiletExpired(
           id: _buildNotificationId(key),
           title: 'Waktu toilet sudah habis',
           body: '$employeeLabel sudah melewati batas waktu toilet.',
         );
-        _notifiedKeys.add(key);
+        if (shown) {
+          _notifiedKeys.add(key);
+        }
       }
 
       _notifiedKeys.removeWhere((key) => !currentKeys.contains(key));

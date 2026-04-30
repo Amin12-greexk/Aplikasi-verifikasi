@@ -19,7 +19,8 @@ void toiletBackgroundCallbackDispatcher() {
       DartPluginRegistrant.ensureInitialized();
 
       await AuthService.init();
-      if (!AuthService.isLoggedIn || !AuthService.isSecurity()) {
+      if (!AuthService.isLoggedIn ||
+          !(AuthService.isPengawas() || AuthService.isSecurity())) {
         return true;
       }
 
@@ -47,7 +48,8 @@ class ToiletBackgroundWorkerService {
     await initialize();
     await AuthService.init();
 
-    if (!AuthService.isLoggedIn || !AuthService.isSecurity()) {
+    if (!AuthService.isLoggedIn ||
+        !(AuthService.isPengawas() || AuthService.isSecurity())) {
       await cancel();
       return;
     }

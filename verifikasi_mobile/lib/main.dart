@@ -44,7 +44,9 @@ class MyApp extends StatelessWidget {
       theme: AppTheme.lightTheme,
       home: getHome(),
       routes: {
-        '/home': (context) => AuthService.isManager() ? const ManagerDashboardPage() : const HomeShell(),
+        '/home': (context) => AuthService.isManager()
+            ? const ManagerDashboardPage()
+            : const HomeShell(),
         '/login': (context) => const LoginPage(),
       },
     );
@@ -78,7 +80,7 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
       vsync: this,
     )..forward();
 
-    if (AuthService.isSecurity()) {
+    if (AuthService.isPengawas() || AuthService.isSecurity()) {
       ToiletExpiryMonitorService.start();
     } else {
       ToiletExpiryMonitorService.stop();

@@ -565,6 +565,52 @@ Future<Router> buildRouter(Database db) async {
     }
   });
 
+  r.post('/toilet-permit/return', (Request req) async {
+    try {
+      final body = jsonDecode(await req.readAsString());
+      var id = _extractBarcodeInfo(
+        body['id_karyawan']?.toString().trim() ?? '',
+      );
+      final username = body['username']?.toString().trim();
+      if (id.isEmpty || username == null || username.isEmpty) {
+        return bad('ID/Username wajib');
+      }
+
+      final rows = db.select(
+        'SELECT * FROM toilet_permit WHERE id_karyawan=?',
+        [id],
+      );
+      if (rows.isEmpty) {
+        return bad('Izin toilet aktif tidak ditemukan', code: 404);
+      }
+
+      final permit = Map<String, Object?>.from(rows.first);
+      await _retryDbOperation(() async {
+        db.execute('BEGIN IMMEDIATE TRANSACTION');
+        try {
+          db.execute(
+            'UPDATE toilet_permit_history SET permit_state="RETURNED" WHERE id_karyawan=? AND approved_at=?',
+            [id, permit['approved_at']],
+          );
+          db.execute('DELETE FROM toilet_permit WHERE id_karyawan=?', [id]);
+          db.execute('COMMIT');
+        } catch (e) {
+          db.execute('ROLLBACK');
+          rethrow;
+        }
+      });
+
+      return ok({
+        'message': 'Mitra ditandai sudah kembali',
+        'id_karyawan': id,
+        'returned_by': username,
+        'returned_at': _formatWibIso(_nowUtc()),
+      });
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
+
   r.get('/toilet-permit/status/<id>', (Request req, String rawId) {
     try {
       final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());

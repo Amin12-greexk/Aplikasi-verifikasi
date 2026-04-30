@@ -11,6 +11,7 @@ class LocalNotificationService {
       FlutterLocalNotificationsPlugin();
 
   static bool _initialized = false;
+  static bool? _notificationsAllowed;
 
   static Future<void> init() async {
     if (_initialized) return;
@@ -35,18 +36,33 @@ class LocalNotificationService {
         importance: Importance.max,
       ),
     );
-    await androidPlugin?.requestNotificationsPermission();
+    _notificationsAllowed =
+        await androidPlugin?.requestNotificationsPermission() ?? true;
 
     _initialized = true;
   }
 
-  static Future<void> showToiletExpired({
+  static Future<bool> showToiletExpired({
     required int id,
     required String title,
     required String body,
   }) async {
     try {
       await init();
+      final androidPlugin = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+      final notificationsEnabled =
+          await androidPlugin?.areNotificationsEnabled() ??
+          _notificationsAllowed ??
+          true;
+
+      if (!notificationsEnabled) {
+        debugPrint('[LocalNotification] Notification permission is disabled');
+        return false;
+      }
+
       await _plugin.show(
         id,
         title,
@@ -64,8 +80,10 @@ class LocalNotificationService {
           ),
         ),
       );
+      return true;
     } catch (e) {
       debugPrint('[LocalNotification] Failed to show notification: $e');
+      return false;
     }
   }
 }

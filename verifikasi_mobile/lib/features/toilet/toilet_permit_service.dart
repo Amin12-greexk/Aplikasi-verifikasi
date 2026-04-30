@@ -287,6 +287,23 @@ class ToiletPermitService {
     return _normalizePermitList(alerts);
   }
 
+  static Future<void> markReturned(String idKaryawan) async {
+    final response = await BaseApiClient.post(
+      '/toilet-permit/return',
+      body: {'id_karyawan': idKaryawan, 'username': AuthService.username},
+    );
+    if (response.statusCode >= 400) {
+      final data = BaseApiClient.tryJson(response.body);
+      throw Exception(
+        _resolveErrorMessage(
+          data,
+          'Gagal menandai mitra sudah kembali',
+          statusCode: response.statusCode,
+        ),
+      );
+    }
+  }
+
   static Future<List<Map<String, dynamic>>> fetchPermitHistory(
     String date,
   ) async {
