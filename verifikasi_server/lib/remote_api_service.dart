@@ -122,8 +122,37 @@ class RemoteApiService {
     return logs.map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
 
+  Future<List<Map<String, dynamic>>> fetchToiletPermits() async {
+    final data = await _sendJson(method: 'GET', path: '/toilet-permits');
+    final permits = data['permits'];
+    if (permits is! List) return <Map<String, dynamic>>[];
+    return permits.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> fetchToiletPermitsByDate(
+    String tanggal,
+  ) async {
+    final data = await _sendJson(
+      method: 'GET',
+      path: '/toilet-permits-history/$tanggal',
+    );
+    final permits = data['permits'];
+    if (permits is! List) return <Map<String, dynamic>>[];
+    return permits.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
   Future<List<String>> fetchHistoryDates() async {
     final data = await _sendJson(method: 'GET', path: '/dates-history');
+    final dates = data['dates'];
+    if (dates is! List) return <String>[];
+    return dates.map((e) => e.toString()).toList();
+  }
+
+  Future<List<String>> fetchToiletHistoryDates() async {
+    final data = await _sendJson(
+      method: 'GET',
+      path: '/toilet-permits-dates-history',
+    );
     final dates = data['dates'];
     if (dates is! List) return <String>[];
     return dates.map((e) => e.toString()).toList();

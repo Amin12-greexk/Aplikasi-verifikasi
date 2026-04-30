@@ -29,6 +29,7 @@ class _RemoteServerHomePageState extends State<RemoteServerHomePage> {
   String? _error;
   List<Map<String, dynamic>> _logs = <Map<String, dynamic>>[];
   int _selectedTab = 0; // 0: live, 1: history
+  bool _showToiletLogs = false;
   String? _viewingDate;
 
   @override
@@ -55,8 +56,12 @@ class _RemoteServerHomePageState extends State<RemoteServerHomePage> {
     }
     try {
       final logs = (_selectedTab == 1 && _viewingDate != null)
-          ? await widget.api.fetchLogsByDate(_viewingDate!)
-          : await widget.api.fetchLogs();
+          ? (_showToiletLogs
+                ? await widget.api.fetchToiletPermitsByDate(_viewingDate!)
+                : await widget.api.fetchLogsByDate(_viewingDate!))
+          : (_showToiletLogs
+                ? await widget.api.fetchToiletPermits()
+                : await widget.api.fetchLogs());
       if (!mounted) return;
       setState(() {
         _logs = logs;
@@ -88,7 +93,9 @@ class _RemoteServerHomePageState extends State<RemoteServerHomePage> {
   Future<void> _pickHistoryDate() async {
     List<String> dates;
     try {
-      dates = await widget.api.fetchHistoryDates();
+      dates = _showToiletLogs
+          ? await widget.api.fetchToiletHistoryDates()
+          : await widget.api.fetchHistoryDates();
     } catch (e) {
       _showSnack('Gagal load tanggal history: $e', isError: true);
       return;
@@ -246,12 +253,12 @@ class _RemoteServerHomePageState extends State<RemoteServerHomePage> {
   @override
   Widget build(BuildContext context) {
     final total = _logs.length;
-    final accPengawas = _logs
-        .where((e) => e['status_pengawas'] == 'ACC')
-        .length;
-    final accSecurity = _logs
-        .where((e) => e['status_security'] == 'ACC')
-        .length;
+    final accPengawas = _showToiletLogs
+        ? _logs.where((e) => e['proof_status'] == 'SCANNED').length
+        : _logs.where((e) => e['status_pengawas'] == 'ACC').length;
+    final accSecurity = _showToiletLogs
+        ? _logs.where((e) => e['permit_state'] == 'EXPIRED').length
+        : _logs.where((e) => e['status_security'] == 'ACC').length;
 
     return Scaffold(
       appBar: AppBar(
@@ -267,6 +274,13 @@ class _RemoteServerHomePageState extends State<RemoteServerHomePage> {
               switch (value) {
                 case 'history':
                   await _pickHistoryDate();
+                case 'toggle_log':
+                  setState(() {
+                    _showToiletLogs = !_showToiletLogs;
+                    _selectedTab = 0;
+                    _viewingDate = null;
+                  });
+                  await _refreshData();
                 case 'users':
                   await Navigator.push(
                     context,
@@ -298,6 +312,10 @@ class _RemoteServerHomePageState extends State<RemoteServerHomePage> {
             },
             itemBuilder: (context) {
               return const [
+                PopupMenuItem(
+                  value: 'toggle_log',
+                  child: Text('Ganti Log Pulang/Toilet'),
+                ),
                 PopupMenuItem(value: 'history', child: Text('Pilih History')),
                 PopupMenuItem(value: 'users', child: Text('User Management')),
                 PopupMenuItem(value: 'rooms', child: Text('Room Management')),
@@ -329,7 +347,7 @@ class _RemoteServerHomePageState extends State<RemoteServerHomePage> {
                     padding: const EdgeInsets.all(12),
                     color: Colors.blue.shade50,
                     child: Text(
-                      'Mode History: $_viewingDate',
+                      'Mode History ${_showToiletLogs ? "Toilet" : "Pulang"}: $_viewingDate',
                       style: TextStyle(
                         color: Colors.blue.shade700,
                         fontWeight: FontWeight.bold,
@@ -342,12 +360,12 @@ class _RemoteServerHomePageState extends State<RemoteServerHomePage> {
                     children: [
                       _statCard('Total Log', total, Colors.blue.shade700),
                       _statCard(
-                        'ACC Pengawas',
+                        _showToiletLogs ? 'Sudah Scan' : 'ACC Pengawas',
                         accPengawas,
                         Colors.orange.shade700,
                       ),
                       _statCard(
-                        'ACC Security',
+                        _showToiletLogs ? 'Expired' : 'ACC Security',
                         accSecurity,
                         Colors.green.shade700,
                       ),
@@ -368,9 +386,7 @@ class _RemoteServerHomePageState extends State<RemoteServerHomePage> {
                                 title: Text(
                                   item['id_karyawan']?.toString() ?? '-',
                                 ),
-                                subtitle: Text(
-                                  'Pengawas: ${item['status_pengawas']} | Security: ${item['status_security']}',
-                                ),
+                                subtitle: Text(_buildLogSubtitle(item)),
                               ),
                             );
                           },
@@ -379,5 +395,12 @@ class _RemoteServerHomePageState extends State<RemoteServerHomePage> {
               ],
             ),
     );
+  }
+
+  String _buildLogSubtitle(Map<String, dynamic> item) {
+    if (!_showToiletLogs) {
+      return 'Pengawas: ${item['status_pengawas']} | Security: ${item['status_security']}';
+    }
+    return 'Status: ${item['permit_state'] ?? '-'} | Bukti: ${item['proof_status'] ?? '-'} | Durasi: ${item['duration_minutes'] ?? '-'} menit | Habis: ${item['expires_at'] ?? '-'}';
   }
 }

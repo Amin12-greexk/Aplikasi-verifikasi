@@ -19,6 +19,7 @@ class ModernServerHome extends StatefulWidget {
 class _ModernServerHomeState extends State<ModernServerHome> {
   String? _viewingDate;
   int _selectedTabIndex = 0; // 0: Live, 1: History
+  bool _showToiletLogs = false;
   late final Timer _refreshTimer;
 
   // Warna Tema
@@ -49,24 +50,35 @@ class _ModernServerHomeState extends State<ModernServerHome> {
     // Logic: Jika Tab History (1) & ada tanggal dipilih, ambil dari history
     // Jika Tab Live (0), ambil dari log_pulang (realtime)
     if (_selectedTabIndex == 1 && _viewingDate != null) {
-      final rows = widget.db.select(
-        'SELECT * FROM log_pulang_history WHERE tanggal = ? ORDER BY rowid DESC',
-        [_viewingDate!],
-      );
-      return rows.map((r) => {
-        'id_karyawan': r['id_karyawan'],
-        'status_pengawas': r['status_pengawas'],
-        'status_security': r['status_security'],
-      }).toList();
-    } else {
-      // Default / Live
-      final rows = widget.db.select('SELECT * FROM log_pulang ORDER BY rowid DESC');
-      return rows.map((r) => {
-        'id_karyawan': r['id_karyawan'],
-        'status_pengawas': r['status_pengawas'],
-        'status_security': r['status_security'],
-      }).toList();
+      if (_showToiletLogs) {
+        return widget.db
+            .select(
+              'SELECT * FROM toilet_permit_history WHERE tanggal = ? ORDER BY rowid DESC',
+              [_viewingDate!],
+            )
+            .map((r) => Map<String, Object?>.from(r))
+            .toList();
+      }
+      return widget.db
+          .select(
+            'SELECT * FROM log_pulang_history WHERE tanggal = ? ORDER BY rowid DESC',
+            [_viewingDate!],
+          )
+          .map((r) => Map<String, Object?>.from(r))
+          .toList();
     }
+
+    if (_showToiletLogs) {
+      return widget.db
+          .select('SELECT * FROM toilet_permit ORDER BY rowid DESC')
+          .map((r) => Map<String, Object?>.from(r))
+          .toList();
+    }
+
+    return widget.db
+        .select('SELECT * FROM log_pulang ORDER BY rowid DESC')
+        .map((r) => Map<String, Object?>.from(r))
+        .toList();
   }
 
   int _getStatusCount(String status, String statusField) {
@@ -93,6 +105,7 @@ class _ModernServerHomeState extends State<ModernServerHome> {
       context: context,
       builder: (context) => _DateHistoryPickerDialog(
         db: widget.db,
+        showToiletLogs: _showToiletLogs,
         onDateSelected: (date) {
           setState(() {
             _viewingDate = date;
@@ -179,7 +192,9 @@ class _ModernServerHomeState extends State<ModernServerHome> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Log berhasil dihapus - History tetap tersimpan'),
+              content: const Text(
+                'Log berhasil dihapus - History tetap tersimpan',
+              ),
               backgroundColor: Colors.green.shade600,
               duration: const Duration(seconds: 3),
             ),
@@ -283,8 +298,12 @@ class _ModernServerHomeState extends State<ModernServerHome> {
   Widget build(BuildContext context) {
     final logs = _getLogs();
     final totalLogs = logs.length;
-    final pengawasACC = _getStatusCount('ACC', 'status_pengawas');
-    final securityACC = _getStatusCount('ACC', 'status_security');
+    final pengawasACC = _showToiletLogs
+        ? logs.where((e) => e['proof_status'] == 'SCANNED').length
+        : _getStatusCount('ACC', 'status_pengawas');
+    final securityACC = _showToiletLogs
+        ? logs.where((e) => e['permit_state'] == 'EXPIRED').length
+        : _getStatusCount('ACC', 'status_security');
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -301,13 +320,21 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                       padding: const EdgeInsets.all(20),
                       child: Column(
                         children: [
-                          _buildStatsSection(totalLogs, pengawasACC, securityACC),
+                          _buildStatsSection(
+                            totalLogs,
+                            pengawasACC,
+                            securityACC,
+                          ),
                           const SizedBox(height: 24),
                           _buildTabNavigation(),
-                          if (_selectedTabIndex == 1 && _viewingDate != null) ...[
+                          if (_selectedTabIndex == 1 &&
+                              _viewingDate != null) ...[
                             const SizedBox(height: 12),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.blue.shade50,
                                 borderRadius: BorderRadius.circular(8),
@@ -316,11 +343,18 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Icon(Icons.calendar_today, size: 14, color: Colors.blue.shade700),
+                                  Icon(
+                                    Icons.calendar_today,
+                                    size: 14,
+                                    color: Colors.blue.shade700,
+                                  ),
                                   const SizedBox(width: 8),
                                   Text(
-                                    'Arsip Tanggal: $_viewingDate',
-                                    style: TextStyle(color: Colors.blue.shade700, fontWeight: FontWeight.bold),
+                                    'Arsip ${_showToiletLogs ? "Toilet" : "Pulang"}: $_viewingDate',
+                                    style: TextStyle(
+                                      color: Colors.blue.shade700,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -365,7 +399,11 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                   color: primaryColor.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.dns_rounded, color: primaryColor, size: 24),
+                child: const Icon(
+                  Icons.dns_rounded,
+                  color: primaryColor,
+                  size: 24,
+                ),
               ),
               const SizedBox(width: 12),
               Column(
@@ -411,7 +449,9 @@ class _ModernServerHomeState extends State<ModernServerHome> {
               const SizedBox(width: 8),
               PopupMenuButton(
                 offset: const Offset(0, 50),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 icon: CircleAvatar(
                   backgroundColor: Colors.grey.shade100,
                   child: Icon(Icons.more_vert, color: Colors.grey.shade600),
@@ -423,7 +463,10 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                       if (!mounted) return;
                       final logs = _getLogs();
                       try {
-                        final result = await ExportService.exportToPdf(logs, 'Laporan Ijin Pulang');
+                        final result = await ExportService.exportToPdf(
+                          logs,
+                          'Laporan Ijin Pulang',
+                        );
                         if (result != null && mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -445,7 +488,11 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                     },
                     child: Row(
                       children: [
-                        Icon(Icons.picture_as_pdf_rounded, color: Colors.red.shade600, size: 20),
+                        Icon(
+                          Icons.picture_as_pdf_rounded,
+                          color: Colors.red.shade600,
+                          size: 20,
+                        ),
                         const SizedBox(width: 12),
                         const Text('Export PDF'),
                       ],
@@ -457,11 +504,16 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                       if (!mounted) return;
                       final logs = _getLogs();
                       try {
-                        final result = await ExportService.exportToExcel(logs, 'Laporan Ijin Pulang');
+                        final result = await ExportService.exportToExcel(
+                          logs,
+                          'Laporan Ijin Pulang',
+                        );
                         if (result != null && mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: const Text('Excel exported successfully'),
+                              content: const Text(
+                                'Excel exported successfully',
+                              ),
                               backgroundColor: Colors.green.shade600,
                             ),
                           );
@@ -479,9 +531,39 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                     },
                     child: Row(
                       children: [
-                        Icon(Icons.table_chart_rounded, color: Colors.green.shade600, size: 20),
+                        Icon(
+                          Icons.table_chart_rounded,
+                          color: Colors.green.shade600,
+                          size: 20,
+                        ),
                         const SizedBox(width: 12),
                         const Text('Export Excel'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    onTap: () async {
+                      await Future.delayed(Duration.zero);
+                      if (!mounted) return;
+                      setState(() {
+                        _showToiletLogs = !_showToiletLogs;
+                        _selectedTabIndex = 0;
+                        _viewingDate = null;
+                      });
+                    },
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.swap_horiz,
+                          color: Colors.purple.shade600,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          _showToiletLogs
+                              ? 'Lihat Log Pulang'
+                              : 'Lihat Log Toilet',
+                        ),
                       ],
                     ),
                   ),
@@ -492,13 +574,18 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => RoomManagementPage(db: widget.db),
+                          builder: (context) =>
+                              RoomManagementPage(db: widget.db),
                         ),
                       );
                     },
                     child: Row(
                       children: [
-                        Icon(Icons.meeting_room_outlined, color: Colors.blue.shade700, size: 20),
+                        Icon(
+                          Icons.meeting_room_outlined,
+                          color: Colors.blue.shade700,
+                          size: 20,
+                        ),
                         const SizedBox(width: 12),
                         const Text('Room Management'),
                       ],
@@ -511,13 +598,18 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => UserManagementPage(db: widget.db),
+                          builder: (context) =>
+                              UserManagementPage(db: widget.db),
                         ),
                       );
                     },
                     child: Row(
                       children: [
-                        Icon(Icons.people_outline, color: Colors.grey.shade700, size: 20),
+                        Icon(
+                          Icons.people_outline,
+                          color: Colors.grey.shade700,
+                          size: 20,
+                        ),
                         const SizedBox(width: 12),
                         const Text('User Management'),
                       ],
@@ -531,9 +623,16 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                     },
                     child: Row(
                       children: [
-                        Icon(Icons.delete_sweep_rounded, color: Colors.amber.shade600, size: 20),
+                        Icon(
+                          Icons.delete_sweep_rounded,
+                          color: Colors.amber.shade600,
+                          size: 20,
+                        ),
                         const SizedBox(width: 12),
-                        Text('Clear Logs', style: TextStyle(color: Colors.amber.shade600)),
+                        Text(
+                          'Clear Logs',
+                          style: TextStyle(color: Colors.amber.shade600),
+                        ),
                       ],
                     ),
                   ),
@@ -541,9 +640,16 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                     onTap: () => Navigator.pop(context), // Logout logic
                     child: Row(
                       children: [
-                        Icon(Icons.logout_rounded, color: Colors.red.shade400, size: 20),
+                        Icon(
+                          Icons.logout_rounded,
+                          color: Colors.red.shade400,
+                          size: 20,
+                        ),
                         const SizedBox(width: 12),
-                        Text('Logout', style: TextStyle(color: Colors.red.shade400)),
+                        Text(
+                          'Logout',
+                          style: TextStyle(color: Colors.red.shade400),
+                        ),
                       ],
                     ),
                   ),
@@ -559,16 +665,36 @@ class _ModernServerHomeState extends State<ModernServerHome> {
   Widget _buildStatsSection(int total, int pengawasACC, int securityACC) {
     return Row(
       children: [
-        _buildStatCard('Total Log', total.toString(), Icons.folder_open_rounded, Colors.blue),
+        _buildStatCard(
+          'Total Log',
+          total.toString(),
+          Icons.folder_open_rounded,
+          Colors.blue,
+        ),
         const SizedBox(width: 12),
-        _buildStatCard('Pengawas', pengawasACC.toString(), Icons.admin_panel_settings_outlined, Colors.orange),
+        _buildStatCard(
+          _showToiletLogs ? 'Sudah Scan' : 'Pengawas',
+          pengawasACC.toString(),
+          Icons.admin_panel_settings_outlined,
+          Colors.orange,
+        ),
         const SizedBox(width: 12),
-        _buildStatCard('Security', securityACC.toString(), Icons.security_rounded, primaryColor),
+        _buildStatCard(
+          _showToiletLogs ? 'Expired' : 'Security',
+          securityACC.toString(),
+          Icons.security_rounded,
+          primaryColor,
+        ),
       ],
     );
   }
 
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
+  Widget _buildStatCard(
+    String title,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
@@ -639,7 +765,7 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                       color: Colors.black.withOpacity(0.05),
                       blurRadius: 4,
                       offset: const Offset(0, 2),
-                    )
+                    ),
                   ]
                 : [],
           ),
@@ -648,8 +774,12 @@ class _ModernServerHomeState extends State<ModernServerHome> {
             children: [
               if (index == 1 && isSelected) ...[
                 GestureDetector(
-                    onTap: _showHistoryPicker, // Klik ikon untuk ganti tanggal
-                    child: Icon(Icons.calendar_month, size: 16, color: primaryColor)
+                  onTap: _showHistoryPicker, // Klik ikon untuk ganti tanggal
+                  child: Icon(
+                    Icons.calendar_month,
+                    size: 16,
+                    color: primaryColor,
+                  ),
                 ),
                 const SizedBox(width: 6),
               ],
@@ -680,7 +810,10 @@ class _ModernServerHomeState extends State<ModernServerHome> {
               const SizedBox(height: 12),
               Text(
                 'Tidak ada data log',
-                style: TextStyle(color: Colors.grey.shade400, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: Colors.grey.shade400,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),
@@ -689,18 +822,18 @@ class _ModernServerHomeState extends State<ModernServerHome> {
     }
 
     return SliverList(
-      delegate: SliverChildBuilderDelegate(
-        (context, index) {
-          final log = logs[index];
-          return _buildLogCard(log, index);
-        },
-        childCount: logs.length,
-      ),
+      delegate: SliverChildBuilderDelegate((context, index) {
+        final log = logs[index];
+        return _buildLogCard(log, index);
+      }, childCount: logs.length),
     );
   }
 
   Widget _buildLogCard(Map<String, Object?> log, int index) {
     final id = log['id_karyawan'].toString();
+    if (_showToiletLogs) {
+      return _buildToiletLogCard(log, index, id);
+    }
     final pengawas = log['status_pengawas']?.toString() ?? '-';
     final security = log['status_security']?.toString() ?? '-';
 
@@ -781,11 +914,65 @@ class _ModernServerHomeState extends State<ModernServerHome> {
     );
   }
 
+  Widget _buildToiletLogCard(Map<String, Object?> log, int index, String id) {
+    final state = log['permit_state']?.toString() ?? '-';
+    final proof = log['proof_status']?.toString() ?? '-';
+    final duration = log['duration_minutes']?.toString() ?? '-';
+    final expiresAt = log['expires_at']?.toString() ?? '-';
+    final approvedBy = log['approved_by']?.toString() ?? '-';
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: surfaceColor,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.shade100,
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.wc_rounded, color: Colors.blue.shade700, size: 32),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  id,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Status: $state | Bukti: $proof | Durasi: $duration menit',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                ),
+                Text(
+                  'Pengawas: $approvedBy | Habis: $expiresAt',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStatusPill(String label, String status) {
     final isAcc = status == 'ACC';
     final color = isAcc ? const Color(0xFF10B981) : const Color(0xFFF59E0B);
     final bgColor = isAcc ? const Color(0xFFECFDF5) : const Color(0xFFFFFBEB);
-    
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -817,17 +1004,20 @@ class _ModernServerHomeState extends State<ModernServerHome> {
 // Dialog Date Picker Modern
 class _DateHistoryPickerDialog extends StatefulWidget {
   final Database db;
+  final bool showToiletLogs;
   final Function(String) onDateSelected;
   final VoidCallback onReset;
 
   const _DateHistoryPickerDialog({
     required this.db,
+    required this.showToiletLogs,
     required this.onDateSelected,
     required this.onReset,
   });
 
   @override
-  State<_DateHistoryPickerDialog> createState() => _DateHistoryPickerDialogState();
+  State<_DateHistoryPickerDialog> createState() =>
+      _DateHistoryPickerDialogState();
 }
 
 class _DateHistoryPickerDialogState extends State<_DateHistoryPickerDialog> {
@@ -841,30 +1031,32 @@ class _DateHistoryPickerDialogState extends State<_DateHistoryPickerDialog> {
   }
 
   Future<List<String>> _fetchAvailableDates() async {
-    // Simulasi data tanggal (Ganti dengan query DB distinct date jika ada)
-    List<String> dates = [];
-    final today = DateTime.now();
-    for (int i = 0; i < 15; i++) {
-      final date = today.subtract(Duration(days: i));
-      final formatted =
-          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-      dates.add(formatted);
-    }
-    return dates;
+    final table = widget.showToiletLogs
+        ? 'toilet_permit_history'
+        : 'log_pulang_history';
+    final rows = widget.db.select(
+      'SELECT DISTINCT tanggal FROM $table ORDER BY tanggal DESC',
+    );
+    return rows.map((row) => row['tanggal'].toString()).toList();
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text('Pilih Tanggal', style: TextStyle(fontWeight: FontWeight.bold)),
+      title: const Text(
+        'Pilih Tanggal',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
       content: SizedBox(
         width: double.maxFinite,
         height: 300,
         child: FutureBuilder<List<String>>(
           future: _datesFuture,
           builder: (context, snapshot) {
-            if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+            if (!snapshot.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
             final dates = snapshot.data!;
             return ListView.builder(
               itemCount: dates.length,
@@ -876,7 +1068,9 @@ class _DateHistoryPickerDialogState extends State<_DateHistoryPickerDialog> {
                   decoration: BoxDecoration(
                     color: isSelected ? Colors.green.shade50 : Colors.white,
                     border: Border.all(
-                      color: isSelected ? Colors.green.shade500 : Colors.grey.shade200
+                      color: isSelected
+                          ? Colors.green.shade500
+                          : Colors.grey.shade200,
                     ),
                     borderRadius: BorderRadius.circular(8),
                   ),
@@ -885,11 +1079,17 @@ class _DateHistoryPickerDialogState extends State<_DateHistoryPickerDialog> {
                     title: Text(
                       date,
                       style: TextStyle(
-                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                        color: isSelected ? Colors.green.shade700 : Colors.black87
+                        fontWeight: isSelected
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                        color: isSelected
+                            ? Colors.green.shade700
+                            : Colors.black87,
                       ),
                     ),
-                    trailing: isSelected ? Icon(Icons.check_circle, color: Colors.green.shade600) : null,
+                    trailing: isSelected
+                        ? Icon(Icons.check_circle, color: Colors.green.shade600)
+                        : null,
                     onTap: () => setState(() => _selectedDate = date),
                   ),
                 );
@@ -901,13 +1101,20 @@ class _DateHistoryPickerDialogState extends State<_DateHistoryPickerDialog> {
       actions: [
         TextButton(
           onPressed: widget.onReset,
-          child: const Text('Reset ke Live', style: TextStyle(color: Colors.orange)),
+          child: const Text(
+            'Reset ke Live',
+            style: TextStyle(color: Colors.orange),
+          ),
         ),
         ElevatedButton(
-          onPressed: _selectedDate == null ? null : () => widget.onDateSelected(_selectedDate!),
+          onPressed: _selectedDate == null
+              ? null
+              : () => widget.onDateSelected(_selectedDate!),
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFF059669),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
           child: const Text('Tampilkan'),
         ),

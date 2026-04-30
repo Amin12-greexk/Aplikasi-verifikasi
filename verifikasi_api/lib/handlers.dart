@@ -954,6 +954,17 @@ Future<Router> buildRouter(Database db) async {
           .toList(),
     }),
   );
+  r.get(
+    '/toilet-permits-dates-history',
+    (Request req) => ok({
+      'dates': db
+          .select(
+            'SELECT DISTINCT tanggal FROM toilet_permit_history ORDER BY tanggal DESC',
+          )
+          .map((r) => r['tanggal'])
+          .toList(),
+    }),
+  );
 
   r.post('/daily-reset', (Request req) async {
     final result = await performDailyReset(db);
