@@ -16,6 +16,7 @@ class _RemoteUserManagementPageState extends State<RemoteUserManagementPage> {
   bool _loading = true;
   String? _error;
   List<Map<String, dynamic>> _users = <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _rooms = <Map<String, dynamic>>[];
 
   @override
   void initState() {
@@ -30,9 +31,11 @@ class _RemoteUserManagementPageState extends State<RemoteUserManagementPage> {
     });
     try {
       final users = await widget.api.fetchUsers();
+      final rooms = await widget.api.fetchRooms();
       if (!mounted) return;
       setState(() {
         _users = users;
+        _rooms = rooms;
       });
     } catch (e) {
       if (!mounted) return;
@@ -61,6 +64,7 @@ class _RemoteUserManagementPageState extends State<RemoteUserManagementPage> {
     final usernameController = TextEditingController();
     final passwordController = TextEditingController();
     var role = 'pengawas';
+    int? roomId;
 
     await showDialog<void>(
       context: context,
@@ -96,16 +100,43 @@ class _RemoteUserManagementPageState extends State<RemoteUserManagementPage> {
                           value: 'security',
                           child: Text('Security'),
                         ),
+                        DropdownMenuItem(
+                          value: 'manager',
+                          child: Text('Manager'),
+                        ),
+                        DropdownMenuItem(value: 'admin', child: Text('Admin')),
                       ],
                       onChanged: (value) {
                         if (value != null) {
                           setDialogState(() {
                             role = value;
+                            if (role != 'pengawas') roomId = null;
                           });
                         }
                       },
                       decoration: const InputDecoration(labelText: 'Role'),
                     ),
+                    if (role == 'pengawas') ...[
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<int>(
+                        initialValue: roomId,
+                        items: _rooms
+                            .map(
+                              (room) => DropdownMenuItem(
+                                value: int.tryParse(room['id'].toString()),
+                                child: Text(room['name']?.toString() ?? '-'),
+                              ),
+                            )
+                            .where((item) => item.value != null)
+                            .toList(),
+                        onChanged: (value) {
+                          setDialogState(() {
+                            roomId = value;
+                          });
+                        },
+                        decoration: const InputDecoration(labelText: 'Ruangan'),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -130,6 +161,7 @@ class _RemoteUserManagementPageState extends State<RemoteUserManagementPage> {
                         username: username,
                         password: password,
                         role: role,
+                        roomId: role == 'pengawas' ? roomId : null,
                       );
                       if (!mounted) return;
                       Navigator.of(this.context).pop();
@@ -153,6 +185,7 @@ class _RemoteUserManagementPageState extends State<RemoteUserManagementPage> {
   Future<void> _showEditDialog(Map<String, dynamic> user) async {
     final passwordController = TextEditingController();
     var role = user['role']?.toString() ?? 'pengawas';
+    var roomId = int.tryParse(user['room_id']?.toString() ?? '');
     final id = int.tryParse(user['id'].toString());
     if (id == null) return;
 
@@ -196,16 +229,43 @@ class _RemoteUserManagementPageState extends State<RemoteUserManagementPage> {
                           value: 'security',
                           child: Text('Security'),
                         ),
+                        DropdownMenuItem(
+                          value: 'manager',
+                          child: Text('Manager'),
+                        ),
+                        DropdownMenuItem(value: 'admin', child: Text('Admin')),
                       ],
                       onChanged: (value) {
                         if (value != null) {
                           setDialogState(() {
                             role = value;
+                            if (role != 'pengawas') roomId = null;
                           });
                         }
                       },
                       decoration: const InputDecoration(labelText: 'Role'),
                     ),
+                    if (role == 'pengawas') ...[
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<int>(
+                        initialValue: roomId,
+                        items: _rooms
+                            .map(
+                              (room) => DropdownMenuItem(
+                                value: int.tryParse(room['id'].toString()),
+                                child: Text(room['name']?.toString() ?? '-'),
+                              ),
+                            )
+                            .where((item) => item.value != null)
+                            .toList(),
+                        onChanged: (value) {
+                          setDialogState(() {
+                            roomId = value;
+                          });
+                        },
+                        decoration: const InputDecoration(labelText: 'Ruangan'),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -229,6 +289,7 @@ class _RemoteUserManagementPageState extends State<RemoteUserManagementPage> {
                         id: id,
                         password: password,
                         role: role,
+                        roomId: role == 'pengawas' ? roomId : null,
                       );
                       if (!mounted) return;
                       Navigator.of(this.context).pop();
@@ -308,7 +369,9 @@ class _RemoteUserManagementPageState extends State<RemoteUserManagementPage> {
                   margin: const EdgeInsets.only(bottom: 12),
                   child: ListTile(
                     title: Text(user['username']?.toString() ?? '-'),
-                    subtitle: Text('Role: ${user['role'] ?? '-'}'),
+                    subtitle: Text(
+                      'Role: ${user['role'] ?? '-'}${user['room_name'] == null ? '' : ' | Ruangan: ${user['room_name']}'}',
+                    ),
                     trailing: Wrap(
                       spacing: 8,
                       children: [

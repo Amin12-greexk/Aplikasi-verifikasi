@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:sqlite3/sqlite3.dart' hide Row;
 import 'user_management.dart';
+import 'room_management.dart';
 import 'export_service.dart';
 
 class ModernServerHome extends StatefulWidget {
@@ -481,6 +482,25 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                         Icon(Icons.table_chart_rounded, color: Colors.green.shade600, size: 20),
                         const SizedBox(width: 12),
                         const Text('Export Excel'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    onTap: () async {
+                      await Future.delayed(Duration.zero);
+                      if (!mounted) return;
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => RoomManagementPage(db: widget.db),
+                        ),
+                      );
+                    },
+                    child: Row(
+                      children: [
+                        Icon(Icons.meeting_room_outlined, color: Colors.blue.shade700, size: 20),
+                        const SizedBox(width: 12),
+                        const Text('Room Management'),
                       ],
                     ),
                   ),

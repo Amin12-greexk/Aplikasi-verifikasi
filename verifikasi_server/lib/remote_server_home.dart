@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'export_service.dart';
 import 'remote_api_service.dart';
+import 'remote_room_management.dart';
 import 'remote_user_management.dart';
 
 class RemoteServerHomePage extends StatefulWidget {
@@ -274,6 +275,14 @@ class _RemoteServerHomePageState extends State<RemoteServerHomePage> {
                     ),
                   );
                   await _refreshData();
+                case 'rooms':
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => RemoteRoomManagementPage(api: widget.api),
+                    ),
+                  );
+                  await _refreshData();
                 case 'clear_logs':
                   await _clearLogsOnly();
                 case 'clear_all':
@@ -291,6 +300,7 @@ class _RemoteServerHomePageState extends State<RemoteServerHomePage> {
               return const [
                 PopupMenuItem(value: 'history', child: Text('Pilih History')),
                 PopupMenuItem(value: 'users', child: Text('User Management')),
+                PopupMenuItem(value: 'rooms', child: Text('Room Management')),
                 PopupMenuItem(value: 'export_pdf', child: Text('Export PDF')),
                 PopupMenuItem(
                   value: 'export_excel',

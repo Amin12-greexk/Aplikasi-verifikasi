@@ -136,15 +136,69 @@ class RemoteApiService {
     return users.map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
 
+  Future<List<Map<String, dynamic>>> fetchRooms() async {
+    final data = await _sendJson(method: 'GET', path: '/admin/rooms');
+    final rooms = data['rooms'];
+    if (rooms is! List) return <Map<String, dynamic>>[];
+    return rooms.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  Future<void> createRoom({
+    required String name,
+    required int maxConcurrentPermits,
+    required int dailyMitraLimit,
+    required bool isActive,
+  }) async {
+    await _sendJson(
+      method: 'POST',
+      path: '/admin/rooms',
+      body: {
+        'name': name,
+        'max_concurrent_permits': maxConcurrentPermits,
+        'daily_mitra_limit': dailyMitraLimit,
+        'is_active': isActive ? 1 : 0,
+      },
+    );
+  }
+
+  Future<void> updateRoom({
+    required int id,
+    required String name,
+    required int maxConcurrentPermits,
+    required int dailyMitraLimit,
+    required bool isActive,
+  }) async {
+    await _sendJson(
+      method: 'PUT',
+      path: '/admin/rooms/$id',
+      body: {
+        'name': name,
+        'max_concurrent_permits': maxConcurrentPermits,
+        'daily_mitra_limit': dailyMitraLimit,
+        'is_active': isActive ? 1 : 0,
+      },
+    );
+  }
+
+  Future<void> deleteRoom(int id) async {
+    await _sendJson(method: 'DELETE', path: '/admin/rooms/$id');
+  }
+
   Future<void> createUser({
     required String username,
     required String password,
     required String role,
+    int? roomId,
   }) async {
     await _sendJson(
       method: 'POST',
       path: '/admin/users',
-      body: {'username': username, 'password': password, 'role': role},
+      body: {
+        'username': username,
+        'password': password,
+        'role': role,
+        'room_id': roomId,
+      },
     );
   }
 
@@ -152,11 +206,12 @@ class RemoteApiService {
     required int id,
     required String password,
     required String role,
+    int? roomId,
   }) async {
     await _sendJson(
       method: 'PUT',
       path: '/admin/users/$id',
-      body: {'password': password, 'role': role},
+      body: {'password': password, 'role': role, 'room_id': roomId},
     );
   }
 

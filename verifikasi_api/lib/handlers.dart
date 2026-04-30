@@ -1,43 +1,33 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 String _generateToken(String username, String role) {
-  // Simple token generation - in production use JWT.
   return 'token_${username}_${role}_${DateTime.now().millisecondsSinceEpoch}';
 }
 
 String _extractBarcodeInfo(String fullBarcode) {
-  // Extract PIN, Nama, and Bagian from barcode string.
   try {
     final namaMatch = RegExp(r'Nama:\s*([^|]+)').firstMatch(fullBarcode);
     final pinMatch = RegExp(r'PIN:\s*([^|]+)').firstMatch(fullBarcode);
     final bagianMatch = RegExp(r'Bagian:\s*([^|]+)').firstMatch(fullBarcode);
-
     final nama = namaMatch?.group(1)?.trim() ?? '';
     final pin = pinMatch?.group(1)?.trim() ?? '';
     final bagian = bagianMatch?.group(1)?.trim() ?? '';
-
-    if (nama.isEmpty && pin.isEmpty && bagian.isEmpty) {
-      return fullBarcode;
-    }
-
+    if (nama.isEmpty && pin.isEmpty && bagian.isEmpty) return fullBarcode;
     final parts = <String>[];
     if (pin.isNotEmpty) parts.add('PIN: $pin');
     if (nama.isNotEmpty) parts.add('Nama: $nama');
     if (bagian.isNotEmpty) parts.add('Bagian: $bagian');
-
     return parts.join(' | ');
   } catch (_) {
     return fullBarcode;
   }
 }
 
-// Retry logic for database operations.
 Future<T> _retryDbOperation<T>(
   Future<T> Function() operation, {
   int maxRetries = 3,
@@ -57,13 +47,9 @@ Future<T> _retryDbOperation<T>(
 }
 
 const Duration _wibOffset = Duration(hours: 7);
-
 DateTime _nowUtc() => DateTime.now().toUtc();
-
 DateTime _toWib(DateTime value) => value.toUtc().add(_wibOffset);
-
 String _twoDigits(int value) => value.toString().padLeft(2, '0');
-
 String _threeDigits(int value) => value.toString().padLeft(3, '0');
 
 String _formatWibIso(DateTime value) {
@@ -83,12 +69,6 @@ DateTime _nextWibMidnightUtc([DateTime? referenceUtc]) {
   ).subtract(_wibOffset);
 }
 
-bool _hasExplicitTimezone(String value) {
-  return value.endsWith('Z') ||
-      RegExp(r'[+-]\d{2}:\d{2}$').hasMatch(value) ||
-      RegExp(r'[+-]\d{4}$').hasMatch(value);
-}
-
 String _formatDate(DateTime value) {
   final wib = _toWib(value);
   return '${wib.year}-${_twoDigits(wib.month)}-${_twoDigits(wib.day)}';
@@ -97,13 +77,12 @@ String _formatDate(DateTime value) {
 DateTime? _tryParseDateTime(Object? raw) {
   final value = raw?.toString().trim();
   if (value == null || value.isEmpty) return null;
-
   try {
     final normalized = value.replaceFirst(' ', 'T');
-    if (_hasExplicitTimezone(normalized)) {
+    if (normalized.endsWith('Z') ||
+        RegExp(r'[+-]\d{2}:\d{2}$').hasMatch(normalized)) {
       return DateTime.parse(normalized).toUtc();
     }
-
     final parsed = DateTime.parse(normalized);
     return DateTime.utc(
       parsed.year,
@@ -112,8 +91,6 @@ DateTime? _tryParseDateTime(Object? raw) {
       parsed.hour,
       parsed.minute,
       parsed.second,
-      parsed.millisecond,
-      parsed.microsecond,
     ).subtract(_wibOffset);
   } catch (_) {
     return null;
@@ -126,6 +103,12 @@ int _normalizeDurationMinutes(Object? raw) {
   if (parsed < 1) return 1;
   if (parsed > 120) return 120;
   return parsed;
+}
+
+int _normalizePositiveInt(Object? raw, {int fallback = 5}) {
+  final parsed = int.tryParse(raw?.toString() ?? '');
+  if (parsed == null) return fallback;
+  return parsed < 1 ? 1 : parsed;
 }
 
 bool _hasToiletTimerStarted(Object? proofStatusRaw, Object? expiresAtRaw) {
@@ -142,10 +125,8 @@ String _resolveToiletPermitState(
   if (!_hasToiletTimerStarted(proofStatusRaw, expiresAtRaw)) {
     return 'WAITING_SECURITY';
   }
-
   final expiresAt = _tryParseDateTime(expiresAtRaw);
   if (expiresAt == null) return 'WAITING_SECURITY';
-
   final reference = now ?? _nowUtc();
   return expiresAt.isAfter(reference) ? 'ACTIVE' : 'EXPIRED';
 }
@@ -159,10 +140,8 @@ int _remainingPermitSeconds(
   if (!_hasToiletTimerStarted(proofStatusRaw, expiresAtRaw)) {
     return _normalizeDurationMinutes(durationMinutesRaw) * 60;
   }
-
   final expiresAt = _tryParseDateTime(expiresAtRaw);
   if (expiresAt == null) return 0;
-
   final reference = now ?? _nowUtc();
   final remaining = expiresAt.difference(reference).inSeconds;
   return remaining > 0 ? remaining : 0;
@@ -175,15 +154,37 @@ int _countTodayToiletPermitApprovals(
 }) {
   final reference = now ?? _nowUtc();
   final result = db.select(
-    'SELECT COUNT(DISTINCT approved_at) AS count '
-    'FROM toilet_permit_history '
+    'SELECT COUNT(*) AS count FROM toilet_permit_history '
     'WHERE id_karyawan=? AND tanggal=? AND approved_at IS NOT NULL',
     [idKaryawan, _formatDate(reference)],
   );
   if (result.isEmpty) return 0;
-  final rawCount = result.first['count'];
-  if (rawCount is int) return rawCount;
-  return int.tryParse(rawCount?.toString() ?? '') ?? 0;
+  return int.tryParse(result.first['count']?.toString() ?? '0') ?? 0;
+}
+
+int _countActivePermitsInRoom(Database db, int? roomId, {DateTime? now}) {
+  if (roomId == null) return 0;
+  final reference = now ?? _nowUtc();
+  final rows = db.select(
+    'SELECT expires_at, proof_status FROM toilet_permit WHERE room_id = ?',
+    [roomId],
+  );
+  int count = 0;
+  for (final row in rows) {
+    final state = _resolveToiletPermitState(
+      row['expires_at'],
+      proofStatusRaw: row['proof_status'],
+      now: reference,
+    );
+    if (state == 'ACTIVE' || state == 'WAITING_SECURITY') count++;
+  }
+  return count;
+}
+
+Map<String, Object?>? _getRoomById(Database db, int? roomId) {
+  if (roomId == null) return null;
+  final rows = db.select('SELECT * FROM rooms WHERE id = ?', [roomId]);
+  return rows.isEmpty ? null : Map<String, Object?>.from(rows.first);
 }
 
 Map<String, Object?> _mapToiletPermitRow(
@@ -191,12 +192,6 @@ Map<String, Object?> _mapToiletPermitRow(
   DateTime? now,
 }) {
   final reference = now ?? _nowUtc();
-  final permitState = _resolveToiletPermitState(
-    row['expires_at'],
-    proofStatusRaw: row['proof_status'],
-    now: reference,
-  );
-
   return {
     'id_karyawan': row['id_karyawan'],
     'duration_minutes': _normalizeDurationMinutes(row['duration_minutes']),
@@ -206,35 +201,20 @@ Map<String, Object?> _mapToiletPermitRow(
     'proof_scanned_by': row['proof_scanned_by'],
     'proof_scanned_at': row['proof_scanned_at'],
     'proof_status': row['proof_status']?.toString() ?? 'PENDING',
-    'permit_state': permitState,
+    'permit_state': _resolveToiletPermitState(
+      row['expires_at'],
+      proofStatusRaw: row['proof_status'],
+      now: reference,
+    ),
+    'room_id': row['room_id'],
+    'is_bypass': row['is_bypass'] == 1,
+    'bypass_reason': row['bypass_reason'],
     'remaining_seconds': _remainingPermitSeconds(
       row['expires_at'],
       proofStatusRaw: row['proof_status'],
       durationMinutesRaw: row['duration_minutes'],
       now: reference,
     ),
-    'created_at': row['created_at'],
-  };
-}
-
-Map<String, Object?> _mapToiletPermitHistoryRow(Map<String, Object?> row) {
-  return {
-    'id': row['id'],
-    'id_karyawan': row['id_karyawan'],
-    'duration_minutes': _normalizeDurationMinutes(row['duration_minutes']),
-    'approved_by': row['approved_by'],
-    'approved_at': row['approved_at'],
-    'expires_at': row['expires_at'],
-    'proof_scanned_by': row['proof_scanned_by'],
-    'proof_scanned_at': row['proof_scanned_at'],
-    'proof_status': row['proof_status']?.toString() ?? 'PENDING',
-    'permit_state':
-        row['permit_state']?.toString() ??
-        _resolveToiletPermitState(
-          row['expires_at'],
-          proofStatusRaw: row['proof_status'],
-        ),
-    'tanggal': row['tanggal'],
     'created_at': row['created_at'],
   };
 }
@@ -247,7 +227,7 @@ void _saveToiletPermitHistory(
 }) {
   final reference = now ?? _nowUtc();
   db.execute(
-    'INSERT INTO toilet_permit_history(id_karyawan, duration_minutes, approved_by, approved_at, expires_at, proof_scanned_by, proof_scanned_at, proof_status, permit_state, tanggal) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO toilet_permit_history(id_karyawan, duration_minutes, approved_by, approved_at, expires_at, proof_scanned_by, proof_scanned_at, proof_status, permit_state, room_id, is_bypass, bypass_reason, tanggal) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     [
       permitRow['id_karyawan'],
       _normalizeDurationMinutes(permitRow['duration_minutes']),
@@ -263,25 +243,22 @@ void _saveToiletPermitHistory(
             proofStatusRaw: permitRow['proof_status'],
             now: reference,
           ),
+      permitRow['room_id'],
+      (permitRow['is_bypass'] == true || permitRow['is_bypass'] == 1) ? 1 : 0,
+      permitRow['bypass_reason'],
       _formatDate(reference),
     ],
   );
 }
 
-/// Performs the daily reset operation.
-/// Moves all current logs to history and clears the active tables.
 Future<Map<String, dynamic>> performDailyReset(Database db) async {
   try {
     final today = _nowUtc();
     final tanggal = _formatDate(today);
-
     return await _retryDbOperation(() async {
       db.execute('BEGIN TRANSACTION');
-
       try {
         final currentLogs = db.select('SELECT * FROM log_pulang');
-        var movedCount = 0;
-
         for (final log in currentLogs) {
           db.execute(
             'INSERT INTO log_pulang_history(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, security_scanned_by, pengawas_scanned_at, security_scanned_at, tanggal) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
@@ -296,47 +273,23 @@ Future<Map<String, dynamic>> performDailyReset(Database db) async {
               tanggal,
             ],
           );
-          movedCount++;
         }
-
-        final currentPermits = db.select('SELECT * FROM toilet_permit');
-        var movedPermitCount = 0;
-        for (final permit in currentPermits) {
-          _saveToiletPermitHistory(
-            db,
-            Map<String, Object?>.from(permit),
-            now: today,
-          );
-          movedPermitCount++;
-        }
-
         db.execute('DELETE FROM log_pulang');
         db.execute('DELETE FROM toilet_permit');
         db.execute('COMMIT');
-
-        stdout.writeln(
-          '[DAILY RESET] Reset completed at ${_formatWibIso(_nowUtc())}',
-        );
-        stdout.writeln(
-          '[DAILY RESET] Moved $movedCount logs and $movedPermitCount toilet permits to history for date: $tanggal',
-        );
-
         return {
           'success': true,
           'message': 'Daily reset completed',
           'tanggal': tanggal,
-          'moved': movedCount,
-          'moved_toilet_permits': movedPermitCount,
+          'moved': currentLogs.length,
           'timestamp': _formatWibIso(_nowUtc()),
         };
       } catch (e) {
         db.execute('ROLLBACK');
-        stderr.writeln('[DAILY RESET] Error during reset: $e');
         rethrow;
       }
     });
   } catch (e) {
-    stderr.writeln('[DAILY RESET] Failed to perform daily reset: $e');
     return {
       'success': false,
       'message': 'Daily reset failed',
@@ -345,83 +298,50 @@ Future<Map<String, dynamic>> performDailyReset(Database db) async {
   }
 }
 
-/// Starts the automatic daily reset scheduler.
-/// Resets data at 00:00 every day.
 Timer? _dailyResetTimer;
-
 void startDailyResetScheduler(Database db) {
   _dailyResetTimer?.cancel();
-
   void scheduleNextReset() {
     final nowUtc = _nowUtc();
     final nextMidnightUtc = _nextWibMidnightUtc(nowUtc);
     final duration = nextMidnightUtc.difference(nowUtc);
-
-    stdout.writeln(
-      '[SCHEDULER] Daily reset scheduled for WIB: ${_formatWibIso(nextMidnightUtc)}',
-    );
-    stdout.writeln(
-      '[SCHEDULER] Time until next reset: ${duration.inHours}h ${duration.inMinutes % 60}m ${duration.inSeconds % 60}s',
-    );
-
     _dailyResetTimer = Timer(duration, () async {
-      stdout.writeln(
-        '[SCHEDULER] Triggering automatic daily reset at 00:00 WIB',
-      );
-
-      final result = await performDailyReset(db);
-
-      if (result['success'] == true) {
-        stdout.writeln(
-          '[SCHEDULER] Automatic reset successful: ${result['message']}',
-        );
-      } else {
-        stderr.writeln(
-          '[SCHEDULER] Automatic reset failed: ${result['error']}',
-        );
-      }
-
+      await performDailyReset(db);
       scheduleNextReset();
     });
   }
 
   scheduleNextReset();
-  stdout.writeln('[SCHEDULER] Daily reset scheduler initialized');
 }
 
-/// Stops the daily reset scheduler.
 void stopDailyResetScheduler() {
   _dailyResetTimer?.cancel();
   _dailyResetTimer = null;
-  stdout.writeln('[SCHEDULER] Daily reset scheduler stopped');
 }
 
 Future<Router> buildRouter(Database db) async {
   final r = Router();
-
   Response bad(String msg, {int code = 400}) => Response(
     code,
     body: jsonEncode({'error': msg}),
     headers: {'Content-Type': 'application/json'},
   );
-
   Response ok(Map<String, Object?> data) => Response.ok(
     jsonEncode(data),
     headers: {'Content-Type': 'application/json'},
   );
 
-  void saveToHistory(
+  void saveLogHistory(
     String idKaryawan,
     String statusPengawas,
-    String statusSecurity, [
+    String statusSecurity, {
     String? pengawasBy,
     String? securityBy,
     String? pengawasAt,
     String? securityAt,
-  ]) {
+  }) {
     final today = _nowUtc();
     final nowIso = _formatWibIso(today);
-    final tanggal = _formatDate(today);
     db.execute(
       'INSERT INTO log_pulang_history(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, security_scanned_by, pengawas_scanned_at, security_scanned_at, tanggal) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
       [
@@ -432,106 +352,38 @@ Future<Router> buildRouter(Database db) async {
         securityBy,
         pengawasAt ?? nowIso,
         securityAt ?? nowIso,
-        tanggal,
+        _formatDate(today),
       ],
     );
   }
 
-  // Login endpoint.
   r.post('/auth/login', (Request req) async {
     try {
       final body = jsonDecode(await req.readAsString());
-      final username = body['username']?.toString().trim();
-      final password = body['password']?.toString().trim();
-
-      if (username == null || username.isEmpty) {
-        return bad('Username wajib diisi');
+      final u = body['username']?.toString().trim();
+      final p = body['password']?.toString().trim();
+      if (u == null || u.isEmpty || p == null || p.isEmpty) {
+        return bad('Username/Password wajib');
       }
-      if (password == null || password.isEmpty) {
-        return bad('Password wajib diisi');
-      }
-
       final rows = db.select(
-        'SELECT id, username, role FROM users WHERE username = ? AND password = ?',
-        [username, password],
+        'SELECT id, username, role, room_id FROM users WHERE username = ? AND password = ?',
+        [u, p],
       );
-
       if (rows.isEmpty) return bad('Username atau password salah', code: 401);
-
       final user = rows.first;
-      final role = user['role']?.toString();
-      final token = _generateToken(username, role ?? '');
-
+      final roomId = user['room_id'] as int?;
+      String? roomName;
+      if (roomId != null) {
+        final room = _getRoomById(db, roomId);
+        roomName = room?['name']?.toString();
+      }
       return ok({
-        'message': 'Login berhasil',
-        'token': token,
+        'token': _generateToken(u, user['role']?.toString() ?? ''),
         'username': user['username'],
-        'role': role,
+        'role': user['role'],
+        'room_id': roomId,
+        'room_name': roomName,
       });
-    } catch (e) {
-      return bad('Error: $e', code: 500);
-    }
-  });
-
-  r.post('/scan-pengawas', (Request req) async {
-    final body = jsonDecode(await req.readAsString());
-    var id = body['id_karyawan']?.toString().trim();
-    final username = body['username']?.toString().trim();
-    if (id == null || id.isEmpty) return bad('id_karyawan wajib');
-
-    id = _extractBarcodeInfo(id);
-
-    try {
-      await _retryDbOperation(() async {
-        final nowIso = _formatWibIso(_nowUtc());
-        db.execute(
-          'INSERT INTO log_pulang(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, pengawas_scanned_at) VALUES(?, "ACC", "PENDING", ?, ?) '
-          'ON CONFLICT(id_karyawan) DO UPDATE SET status_pengawas="ACC", pengawas_scanned_by=?, pengawas_scanned_at=?;',
-          [id, username, nowIso, username, nowIso],
-        );
-        return null;
-      });
-
-      final row = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
-        id,
-      ]).first;
-      return ok(Map<String, Object?>.from(row));
-    } catch (e) {
-      return bad('Error: $e', code: 500);
-    }
-  });
-
-  r.post('/scan-security', (Request req) async {
-    final body = jsonDecode(await req.readAsString());
-    var id = body['id_karyawan']?.toString().trim();
-    final username = body['username']?.toString().trim();
-    if (id == null || id.isEmpty) return bad('id_karyawan wajib');
-
-    id = _extractBarcodeInfo(id);
-
-    try {
-      final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
-        id,
-      ]);
-      if (rows.isEmpty) return bad('Belum ada ACC pengawas');
-
-      final row = Map<String, Object?>.from(rows.first);
-      if (row['status_pengawas'] != 'ACC') return bad('Pengawas belum ACC');
-
-      final nowIso = _formatWibIso(_nowUtc());
-      await _retryDbOperation(() async {
-        db.execute(
-          'UPDATE log_pulang SET status_security="ACC", security_scanned_by=?, security_scanned_at=? WHERE id_karyawan=?',
-          [username, nowIso, id],
-        );
-        return null;
-      });
-
-      final updated = db.select(
-        'SELECT * FROM log_pulang WHERE id_karyawan=?',
-        [id],
-      ).first;
-      return ok(Map<String, Object?>.from(updated));
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
@@ -540,60 +392,119 @@ Future<Router> buildRouter(Database db) async {
   r.post('/toilet-permit/approve', (Request req) async {
     try {
       final body = jsonDecode(await req.readAsString());
-      var id = body['id_karyawan']?.toString().trim();
+      var id = _extractBarcodeInfo(
+        body['id_karyawan']?.toString().trim() ?? '',
+      );
       final username = body['username']?.toString().trim();
-      final durationMinutes = _normalizeDurationMinutes(
-        body['duration_minutes'],
-      );
+      final duration = _normalizeDurationMinutes(body['duration_minutes']);
+      final isBypass = body['is_bypass'] == true;
+      final bypassReason = body['bypass_reason']?.toString().trim();
 
-      if (id == null || id.isEmpty) return bad('id_karyawan wajib');
-      if (username == null || username.isEmpty) return bad('username wajib');
-
-      id = _extractBarcodeInfo(id);
-      final now = _nowUtc();
-      final todayApprovalCount = _countTodayToiletPermitApprovals(
-        db,
-        id,
-        now: now,
-      );
-      if (todayApprovalCount >= 2) {
-        return bad('Maksimal izin toilet 2 kali per hari untuk setiap mitra');
+      if (id.isEmpty || username == null || username.isEmpty) {
+        return bad('ID Karyawan/Username wajib');
       }
-      final approvedAtIso = _formatWibIso(now);
-      final existing = db.select(
-        'SELECT id_karyawan FROM toilet_permit WHERE id_karyawan=?',
-        [id],
-      );
 
+      final supervisor = db.select(
+        'SELECT room_id FROM users WHERE username = ?',
+        [username],
+      );
+      if (supervisor.isEmpty) return bad('Pengawas tidak ditemukan');
+      final roomId = supervisor.first['room_id'] as int?;
+      if (roomId == null) return bad('Pengawas belum ditugaskan ke ruangan');
+
+      final room = _getRoomById(db, roomId);
+      if (room == null || room['is_active'] == 0) {
+        return bad('Ruangan tidak aktif');
+      }
+
+      if (isBypass && (bypassReason == null || bypassReason.isEmpty)) {
+        return bad('Alasan bypass wajib diisi');
+      }
+
+      final now = _nowUtc();
+      final nowIso = _formatWibIso(now);
+      Response? limitResponse;
       await _retryDbOperation(() async {
-        db.execute(
-          'INSERT INTO toilet_permit(id_karyawan, duration_minutes, approved_by, approved_at, expires_at, proof_scanned_by, proof_scanned_at, proof_status) VALUES(?, ?, ?, ?, NULL, NULL, NULL, "PENDING") '
-          'ON CONFLICT(id_karyawan) DO UPDATE SET duration_minutes=?, approved_by=?, approved_at=?, expires_at=NULL, proof_scanned_by=NULL, proof_scanned_at=NULL, proof_status="PENDING";',
-          [
-            id,
-            durationMinutes,
-            username,
-            approvedAtIso,
-            durationMinutes,
-            username,
-            approvedAtIso,
-          ],
-        );
-        return null;
+        db.execute('BEGIN IMMEDIATE TRANSACTION');
+        try {
+          final dailyLimit = _normalizePositiveInt(room['daily_mitra_limit']);
+          final todayCount = _countTodayToiletPermitApprovals(db, id, now: now);
+          if (todayCount >= dailyLimit && !isBypass) {
+            limitResponse = Response(
+              403,
+              body: jsonEncode({
+                'error': 'LIMIT_EXCEEDED',
+                'message':
+                    'Mitra sudah ke toilet $todayCount kali hari ini. Gunakan bypass jika darurat.',
+              }),
+              headers: {'Content-Type': 'application/json'},
+            );
+            db.execute('ROLLBACK');
+            return;
+          }
+
+          final maxConcurrent = _normalizePositiveInt(
+            room['max_concurrent_permits'],
+          );
+          final activeCount = _countActivePermitsInRoom(db, roomId, now: now);
+          if (activeCount >= maxConcurrent) {
+            limitResponse = Response(
+              403,
+              body: jsonEncode({
+                'error': 'QUOTA_FULL',
+                'message':
+                    'Kuota ruangan penuh ($activeCount/$maxConcurrent aktif).',
+              }),
+              headers: {'Content-Type': 'application/json'},
+            );
+            db.execute('ROLLBACK');
+            return;
+          }
+
+          db.execute(
+            'INSERT INTO toilet_permit(id_karyawan, duration_minutes, approved_by, approved_at, proof_status, room_id, is_bypass, bypass_reason) VALUES(?, ?, ?, ?, "PENDING", ?, ?, ?) '
+            'ON CONFLICT(id_karyawan) DO UPDATE SET duration_minutes=?, approved_by=?, approved_at=?, expires_at=NULL, proof_scanned_by=NULL, proof_scanned_at=NULL, proof_status="PENDING", room_id=?, is_bypass=?, bypass_reason=?;',
+            [
+              id,
+              duration,
+              username,
+              nowIso,
+              roomId,
+              isBypass ? 1 : 0,
+              bypassReason,
+              duration,
+              username,
+              nowIso,
+              roomId,
+              isBypass ? 1 : 0,
+              bypassReason,
+            ],
+          );
+          // Langsung simpan ke history sebagai LOG AKTIVITAS agar hitungan limit harian akurat secara realtime
+          _saveToiletPermitHistory(db, {
+            'id_karyawan': id,
+            'duration_minutes': duration,
+            'approved_by': username,
+            'approved_at': nowIso,
+            'proof_status': 'PENDING',
+            'room_id': roomId,
+            'is_bypass': isBypass,
+            'bypass_reason': bypassReason,
+          }, now: now);
+          db.execute('COMMIT');
+        } catch (e) {
+          db.execute('ROLLBACK');
+          rethrow;
+        }
       });
+      if (limitResponse != null) return limitResponse!;
 
       final row = Map<String, Object?>.from(
         db.select('SELECT * FROM toilet_permit WHERE id_karyawan=?', [
           id,
         ]).first,
       );
-
-      return ok({
-        ..._mapToiletPermitRow(row, now: now),
-        'message': existing.isEmpty
-            ? 'Izin toilet disetujui, menunggu scan security'
-            : 'Izin toilet diperbarui, menunggu scan security',
-      });
+      return ok(_mapToiletPermitRow(row, now: now));
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
@@ -602,13 +513,13 @@ Future<Router> buildRouter(Database db) async {
   r.post('/toilet-permit/proof-scan', (Request req) async {
     try {
       final body = jsonDecode(await req.readAsString());
-      var id = body['id_karyawan']?.toString().trim();
+      var id = _extractBarcodeInfo(
+        body['id_karyawan']?.toString().trim() ?? '',
+      );
       final username = body['username']?.toString().trim();
-
-      if (id == null || id.isEmpty) return bad('id_karyawan wajib');
-      if (username == null || username.isEmpty) return bad('username wajib');
-
-      id = _extractBarcodeInfo(id);
+      if (id.isEmpty || username == null || username.isEmpty) {
+        return bad('ID/Username wajib');
+      }
 
       final rows = db.select(
         'SELECT * FROM toilet_permit WHERE id_karyawan=?',
@@ -616,16 +527,12 @@ Future<Router> buildRouter(Database db) async {
       );
       if (rows.isEmpty) return bad('Belum ada izin toilet dari pengawas');
 
-      final now = _nowUtc();
       final permit = Map<String, Object?>.from(rows.first);
-      final existingProof = permit['proof_scanned_at']?.toString().trim() ?? '';
-      if (existingProof.isNotEmpty) {
-        return ok({
-          ..._mapToiletPermitRow(permit, now: now),
-          'message': 'Security scan sudah tercatat',
-        });
+      if (permit['proof_scanned_at'] != null) {
+        return ok(_mapToiletPermitRow(permit));
       }
 
+      final now = _nowUtc();
       final nowIso = _formatWibIso(now);
       final expiresAtIso = _formatWibIso(
         now.add(
@@ -634,12 +541,17 @@ Future<Router> buildRouter(Database db) async {
           ),
         ),
       );
+
       await _retryDbOperation(() async {
         db.execute(
           'UPDATE toilet_permit SET proof_scanned_by=?, proof_scanned_at=?, expires_at=?, proof_status="SCANNED" WHERE id_karyawan=?',
           [username, nowIso, expiresAtIso, id],
         );
-        return null;
+        // Update history yang bersesuaian (paling baru) agar laporannya lengkap
+        db.execute(
+          'UPDATE toilet_permit_history SET proof_scanned_by=?, proof_scanned_at=?, expires_at=?, proof_status="SCANNED", permit_state="ACTIVE" WHERE id_karyawan=? AND approved_at=?',
+          [username, nowIso, expiresAtIso, id, permit['approved_at']],
+        );
       });
 
       final updated = Map<String, Object?>.from(
@@ -647,346 +559,121 @@ Future<Router> buildRouter(Database db) async {
           id,
         ]).first,
       );
-
-      return ok({
-        ..._mapToiletPermitRow(updated, now: now),
-        'message': 'Security scan berhasil, timer dimulai',
-      });
+      return ok(_mapToiletPermitRow(updated, now: now));
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
   });
 
-  r.get('/toilet-permit/status/<id>', (Request req, String id) {
-    final decodedId = _extractBarcodeInfo(Uri.decodeComponent(id));
-    final rows = db.select('SELECT * FROM toilet_permit WHERE id_karyawan=?', [
-      decodedId,
-    ]);
-    if (rows.isEmpty) {
-      return Response.notFound(
-        jsonEncode({'error': 'Belum ada izin toilet dari pengawas'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
-    return ok(_mapToiletPermitRow(Map<String, Object?>.from(rows.first)));
-  });
-
-  r.get('/status/<id>', (Request req, String id) {
-    final decodedId = Uri.decodeComponent(id);
-    final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
-      decodedId,
-    ]);
-    if (rows.isEmpty) {
-      return Response.notFound(
-        jsonEncode({'error': 'not found'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
-    return ok(Map<String, Object?>.from(rows.first));
-  });
-
-  Response logsHandler(Request req) {
-    final params = req.url.queryParameters;
-    final limit = int.tryParse(params['limit'] ?? '100') ?? 100;
-    final offset = int.tryParse(params['offset'] ?? '0') ?? 0;
-
-    final rows = db.select(
-      'SELECT * FROM log_pulang ORDER BY rowid DESC LIMIT ? OFFSET ?',
-      [limit, offset],
-    );
-    final list = rows
-        .map(
-          (r) => {
-            'id_karyawan': r['id_karyawan'],
-            'status_pengawas': r['status_pengawas'],
-            'status_security': r['status_security'],
-            'pengawas_scanned_by': r['pengawas_scanned_by'],
-            'security_scanned_by': r['security_scanned_by'],
-            'pengawas_scanned_at': r['pengawas_scanned_at'],
-            'security_scanned_at': r['security_scanned_at'],
-            'created_at': r['created_at'],
-          },
-        )
-        .toList();
-    return ok({'logs': list, 'limit': limit, 'offset': offset});
-  }
-
-  Response toiletPermitHandler(Request req) {
-    final params = req.url.queryParameters;
-    final limit = int.tryParse(params['limit'] ?? '100') ?? 100;
-    final offset = int.tryParse(params['offset'] ?? '0') ?? 0;
-
-    final rows = db.select(
-      'SELECT * FROM toilet_permit ORDER BY approved_at DESC LIMIT ? OFFSET ?',
-      [limit, offset],
-    );
-    final list = rows
-        .map((r) => _mapToiletPermitRow(Map<String, Object?>.from(r)))
-        .toList();
-    return ok({'permits': list, 'limit': limit, 'offset': offset});
-  }
-
-  Response toiletPermitAlertsHandler(Request req) {
-    final now = _nowUtc();
-    final rows = db.select(
-      'SELECT * FROM toilet_permit ORDER BY expires_at ASC, approved_at DESC',
-    );
-    final alerts = rows
-        .map((r) => _mapToiletPermitRow(Map<String, Object?>.from(r), now: now))
-        .where(
-          (permit) =>
-              permit['permit_state'] == 'EXPIRED' &&
-              permit['proof_status']?.toString().toUpperCase() == 'SCANNED',
-        )
-        .toList();
-    return ok({
-      'alerts': alerts,
-      'count': alerts.length,
-      'generated_at': _formatWibIso(now),
-    });
-  }
-
-  r.get('/logs', logsHandler);
-  r.get('/logs/', logsHandler);
-  r.get('/toilet-permits', toiletPermitHandler);
-  r.get('/toilet-permits/', toiletPermitHandler);
-  r.get('/toilet-permits-alerts', toiletPermitAlertsHandler);
-  r.get('/toilet-permits-alerts/', toiletPermitAlertsHandler);
-
-  // Get logs by date.
-  r.get('/logs-history/<tanggal>', (Request req, String tanggal) {
+  r.get('/toilet-permit/status/<id>', (Request req, String rawId) {
     try {
+      final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());
+      if (id.isEmpty) return bad('ID Karyawan wajib');
       final rows = db.select(
-        'SELECT * FROM log_pulang_history WHERE tanggal = ? ORDER BY rowid DESC',
-        [tanggal],
+        'SELECT * FROM toilet_permit WHERE id_karyawan=?',
+        [id],
       );
-      final list = rows
-          .map(
-            (r) => {
-              'id_karyawan': r['id_karyawan'],
-              'status_pengawas': r['status_pengawas'],
-              'status_security': r['status_security'],
-              'pengawas_scanned_by': r['pengawas_scanned_by'],
-              'security_scanned_by': r['security_scanned_by'],
-              'pengawas_scanned_at': r['pengawas_scanned_at'],
-              'security_scanned_at': r['security_scanned_at'],
-              'tanggal': r['tanggal'],
-              'created_at': r['created_at'],
-            },
-          )
-          .toList();
-      return ok({'logs': list, 'tanggal': tanggal, 'total': list.length});
+      if (rows.isEmpty) {
+        return bad('Belum ada izin toilet dari pengawas', code: 404);
+      }
+      return ok(_mapToiletPermitRow(Map<String, Object?>.from(rows.first)));
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
   });
 
-  r.get('/toilet-permits-history/<tanggal>', (Request req, String tanggal) {
-    try {
-      final rows = db.select(
-        'SELECT * FROM toilet_permit_history WHERE tanggal = ? ORDER BY rowid DESC',
-        [tanggal],
-      );
-      final list = rows
-          .map((r) => _mapToiletPermitHistoryRow(Map<String, Object?>.from(r)))
-          .toList();
-      return ok({'permits': list, 'tanggal': tanggal, 'total': list.length});
-    } catch (e) {
-      return bad('Error: $e', code: 500);
-    }
-  });
-
-  // Get all unique dates in history.
-  r.get('/dates-history', (Request req) {
-    try {
-      final rows = db.select(
-        'SELECT DISTINCT tanggal FROM log_pulang_history ORDER BY tanggal DESC',
-      );
-      final dates = rows.map((r) => r['tanggal']).toList();
-      return ok({'dates': dates});
-    } catch (e) {
-      return bad('Error: $e', code: 500);
-    }
-  });
-
-  r.get('/stats/dashboard', (Request req) {
+  r.get('/toilet-permits-alerts', (Request req) {
     try {
       final now = _nowUtc();
-      final todayStr = _formatDate(now);
+      final alerts = db
+          .select('SELECT * FROM toilet_permit ORDER BY approved_at DESC')
+          .map(
+            (r) => _mapToiletPermitRow(Map<String, Object?>.from(r), now: now),
+          )
+          .where((permit) => permit['permit_state'] == 'EXPIRED')
+          .toList();
+      return ok({'alerts': alerts});
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
 
-      // Today's summary
-      final todayLogs = db.select(
-        'SELECT COUNT(*) as total, '
-        'SUM(CASE WHEN status_pengawas = "ACC" THEN 1 ELSE 0 END) as pengawas_acc, '
-        'SUM(CASE WHEN status_security = "ACC" THEN 1 ELSE 0 END) as security_acc '
-        'FROM log_pulang',
-      ).first;
-
-      final todayToilet = db.select(
-        'SELECT COUNT(*) as count FROM toilet_permit',
-      ).first['count'];
-
-      // Top 5 Toilet users today
-      final topToiletToday = db.select(
-        'SELECT id_karyawan, COUNT(*) as count, SUM(duration_minutes) as total_minutes '
-        'FROM toilet_permit_history '
-        'WHERE tanggal = ? '
-        'GROUP BY id_karyawan '
-        'ORDER BY count DESC LIMIT 10',
-        [todayStr],
-      );
-
-      // Top 5 Toilet users all time
-      final topToiletAllTime = db.select(
-        'SELECT id_karyawan, COUNT(*) as count, SUM(duration_minutes) as total_minutes '
-        'FROM toilet_permit_history '
-        'GROUP BY id_karyawan '
-        'ORDER BY count DESC LIMIT 10',
-      );
-
-      // Monthly toilet usage (last 7 days)
-      final last7Days = db.select(
-        'SELECT tanggal, COUNT(*) as count '
-        'FROM toilet_permit_history '
-        'WHERE tanggal >= date("now", "-7 days") '
-        'GROUP BY tanggal '
-        'ORDER BY tanggal ASC',
-      );
-
+  r.get('/admin/rooms', (Request req) {
+    try {
       return ok({
-        'summary': {
-          'today_logs': todayLogs['total'],
-          'pengawas_acc': todayLogs['pengawas_acc'],
-          'security_acc': todayLogs['security_acc'],
-          'today_toilet_permits': todayToilet,
-        },
-        'top_toilet_today': topToiletToday,
-        'top_toilet_all_time': topToiletAllTime,
-        'last_7_days_usage': last7Days,
+        'rooms': db.select('SELECT * FROM rooms ORDER BY name ASC').toList(),
       });
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
   });
 
-  // Daily reset endpoint - clears current day logs but keeps history.
-  r.post('/daily-reset', (Request req) async {
-    try {
-      final result = await performDailyReset(db);
-      if (result['success'] == true) {
-        return ok({
-          'message': result['message'],
-          'tanggal': result['tanggal'],
-          'cleared': result['moved'],
-          'cleared_toilet_permits': result['moved_toilet_permits'],
-          'timestamp': result['timestamp'],
-        });
-      }
-      return bad(result['error'].toString(), code: 500);
-    } catch (e) {
-      return bad('Error: $e', code: 500);
-    }
-  });
-
-  // CRUD Log Endpoints.
-  r.post('/logs', (Request req) async {
+  r.post('/admin/rooms', (Request req) async {
     try {
       final body = jsonDecode(await req.readAsString());
-      var id = body['id_karyawan']?.toString().trim();
-      final pengawas = body['status_pengawas']?.toString().trim() ?? 'PENDING';
-      final security = body['status_security']?.toString().trim() ?? 'PENDING';
-
-      if (id == null || id.isEmpty) return bad('id_karyawan wajib');
-      id = _extractBarcodeInfo(id);
-
-      db.execute(
-        'INSERT INTO log_pulang(id_karyawan, status_pengawas, status_security) VALUES(?, ?, ?) '
-        'ON CONFLICT(id_karyawan) DO UPDATE SET status_pengawas=?, status_security=?',
-        [id, pengawas, security, pengawas, security],
+      final name = body['name']?.toString().trim();
+      if (name == null || name.isEmpty) return bad('Nama wajib');
+      final maxConcurrent = _normalizePositiveInt(
+        body['max_concurrent_permits'],
       );
-      saveToHistory(id, pengawas, security);
-
-      final row = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
-        id,
-      ]).first;
-      return ok(Map<String, Object?>.from(row));
-    } catch (e) {
-      return bad('Error: $e', code: 500);
-    }
-  });
-
-  r.get('/logs/<id>', (Request req, String id) {
-    final decodedId = Uri.decodeComponent(id);
-    final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
-      decodedId,
-    ]);
-    if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
-    return ok(Map<String, Object?>.from(rows.first));
-  });
-
-  r.put('/logs/<id>', (Request req, String id) async {
-    try {
-      final decodedId = Uri.decodeComponent(id);
-      final body = jsonDecode(await req.readAsString());
-      final pengawas = body['status_pengawas']?.toString().trim() ?? 'PENDING';
-      final security = body['status_security']?.toString().trim() ?? 'PENDING';
-
+      final dailyLimit = _normalizePositiveInt(body['daily_mitra_limit']);
+      final isActive = body['is_active'] == false || body['is_active'] == 0
+          ? 0
+          : 1;
       db.execute(
-        'UPDATE log_pulang SET status_pengawas=?, status_security=? WHERE id_karyawan=?',
-        [pengawas, security, decodedId],
+        'INSERT INTO rooms(name, max_concurrent_permits, daily_mitra_limit, is_active) VALUES(?, ?, ?, ?)',
+        [name, maxConcurrent, dailyLimit, isActive],
       );
-      saveToHistory(decodedId, pengawas, security);
-
-      final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
-        decodedId,
-      ]);
-      if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
-      return ok(Map<String, Object?>.from(rows.first));
+      return ok({'message': 'Ruangan berhasil dibuat'});
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
   });
 
-  r.delete('/logs/<id>', (Request req, String id) async {
-    try {
-      final decodedId = Uri.decodeComponent(id);
-      final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
-        decodedId,
-      ]);
-      if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
-
-      db.execute('DELETE FROM log_pulang WHERE id_karyawan=?', [decodedId]);
-      return ok({'message': 'Log berhasil dihapus', 'id_karyawan': decodedId});
-    } catch (e) {
-      return bad('Error: $e', code: 500);
-    }
-  });
-
-  // Admin Endpoints.
-  r.post('/admin/login', (Request req) async {
+  r.put('/admin/rooms/<id>', (Request req, String id) async {
     try {
       final body = jsonDecode(await req.readAsString());
-      final username = body['username']?.toString().trim();
-      final password = body['password']?.toString().trim();
+      final maxConcurrent = body.containsKey('max_concurrent_permits')
+          ? _normalizePositiveInt(body['max_concurrent_permits'])
+          : null;
+      final dailyLimit = body.containsKey('daily_mitra_limit')
+          ? _normalizePositiveInt(body['daily_mitra_limit'])
+          : null;
+      db.execute(
+        'UPDATE rooms SET name=COALESCE(?, name), max_concurrent_permits=COALESCE(?, max_concurrent_permits), daily_mitra_limit=COALESCE(?, daily_mitra_limit), is_active=COALESCE(?, is_active) WHERE id=?',
+        [body['name'], maxConcurrent, dailyLimit, body['is_active'], id],
+      );
+      return ok({'message': 'Ruangan berhasil diupdate'});
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
 
-      if (username == null || username.isEmpty) {
-        return bad('Username wajib diisi');
-      }
-      if (password == null || password.isEmpty) {
-        return bad('Password wajib diisi');
-      }
-
-      if (username == 'admin' && password == 'admin123') {
-        final token = 'admin_token_${DateTime.now().millisecondsSinceEpoch}';
-        return ok({
-          'message': 'Admin login berhasil',
-          'token': token,
-          'username': 'admin',
-          'role': 'admin',
-        });
-      }
-
-      return bad('Username atau password salah', code: 401);
+  r.delete('/admin/rooms/<id>', (Request req, String id) async {
+    try {
+      final roomId = int.tryParse(id);
+      if (roomId == null) return bad('ID ruangan tidak valid');
+      final exists = db.select('SELECT id FROM rooms WHERE id=?', [roomId]);
+      if (exists.isEmpty) return bad('Ruangan tidak ditemukan', code: 404);
+      await _retryDbOperation(() async {
+        db.execute('BEGIN IMMEDIATE TRANSACTION');
+        try {
+          db.execute('UPDATE users SET room_id=NULL WHERE room_id=?', [roomId]);
+          db.execute('UPDATE toilet_permit SET room_id=NULL WHERE room_id=?', [
+            roomId,
+          ]);
+          db.execute(
+            'UPDATE toilet_permit_history SET room_id=NULL WHERE room_id=?',
+            [roomId],
+          );
+          db.execute('DELETE FROM rooms WHERE id=?', [roomId]);
+          db.execute('COMMIT');
+        } catch (e) {
+          db.execute('ROLLBACK');
+          rethrow;
+        }
+      });
+      return ok({'message': 'Ruangan berhasil dihapus'});
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
@@ -995,9 +682,9 @@ Future<Router> buildRouter(Database db) async {
   r.get('/admin/users', (Request req) {
     try {
       final rows = db.select(
-        'SELECT id, username, role, created_at FROM users ORDER BY id DESC',
+        'SELECT u.*, r.name as room_name FROM users u LEFT JOIN rooms r ON u.room_id = r.id ORDER BY u.id DESC',
       );
-      return ok({'users': rows});
+      return ok({'users': rows.toList()});
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
@@ -1006,35 +693,12 @@ Future<Router> buildRouter(Database db) async {
   r.post('/admin/users', (Request req) async {
     try {
       final body = jsonDecode(await req.readAsString());
-      final username = body['username']?.toString().trim();
-      final password = body['password']?.toString().trim();
-      final role = body['role']?.toString().trim();
-
-      if (username == null || username.isEmpty) {
-        return bad('Username wajib diisi');
-      }
-      if (password == null || password.isEmpty) {
-        return bad('Password wajib diisi');
-      }
-      if (role == null || role.isEmpty) return bad('Role wajib diisi');
-      if (role != 'pengawas' && role != 'security' && role != 'manager') {
-        return bad('Role hanya bisa pengawas, security, atau manager');
-      }
-
       db.execute(
-        'INSERT INTO users(username, password, role) VALUES(?, ?, ?)',
-        [username, password, role],
+        'INSERT INTO users(username, password, role, room_id) VALUES(?, ?, ?, ?)',
+        [body['username'], body['password'], body['role'], body['room_id']],
       );
-
-      final rows = db.select(
-        'SELECT id, username, role, created_at FROM users WHERE username=?',
-        [username],
-      );
-      return ok(Map<String, Object?>.from(rows.first));
+      return ok({'message': 'User berhasil dibuat'});
     } catch (e) {
-      if (e.toString().contains('UNIQUE constraint failed')) {
-        return bad('Username sudah terdaftar');
-      }
       return bad('Error: $e', code: 500);
     }
   });
@@ -1042,30 +706,11 @@ Future<Router> buildRouter(Database db) async {
   r.put('/admin/users/<id>', (Request req, String id) async {
     try {
       final body = jsonDecode(await req.readAsString());
-      final password = body['password']?.toString().trim();
-      final role = body['role']?.toString().trim();
-
-      if (password == null || password.isEmpty) {
-        return bad('Password wajib diisi');
-      }
-      if (role == null || role.isEmpty) return bad('Role wajib diisi');
-      if (role != 'pengawas' && role != 'security' && role != 'manager') {
-        return bad('Role hanya bisa pengawas, security, atau manager');
-      }
-
-      db.execute('UPDATE users SET password=?, role=? WHERE id=?', [
-        password,
-        role,
-        id,
-      ]);
-
-      final rows = db.select(
-        'SELECT id, username, role, created_at FROM users WHERE id=?',
-        [id],
+      db.execute(
+        'UPDATE users SET password=COALESCE(?, password), role=COALESCE(?, role), room_id=COALESCE(?, room_id) WHERE id=?',
+        [body['password'], body['role'], body['room_id'], id],
       );
-
-      if (rows.isEmpty) return bad('User tidak ditemukan', code: 404);
-      return ok(Map<String, Object?>.from(rows.first));
+      return ok({'message': 'User berhasil diupdate'});
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
@@ -1075,38 +720,227 @@ Future<Router> buildRouter(Database db) async {
     try {
       final rows = db.select('SELECT username FROM users WHERE id=?', [id]);
       if (rows.isEmpty) return bad('User tidak ditemukan', code: 404);
-
-      final username = rows.first['username'];
       db.execute('DELETE FROM users WHERE id=?', [id]);
-
       return ok({
         'message': 'User berhasil dihapus',
         'id': id,
-        'username': username,
+        'username': rows.first['username'],
       });
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
   });
 
-  r.post('/admin/clear-logs', (Request req) async {
+  r.post('/admin/login', (Request req) async {
     try {
-      final deletedCount =
-          db.select('SELECT COUNT(*) as count FROM log_pulang').first['count']
-              as int;
-      final deletedPermitCount =
-          db
-                  .select('SELECT COUNT(*) as count FROM toilet_permit')
-                  .first['count']
-              as int;
+      final body = jsonDecode(await req.readAsString());
+      final u = body['username']?.toString().trim();
+      final p = body['password']?.toString().trim();
+      final rows = db.select(
+        'SELECT role FROM users WHERE username=? AND password=? AND role="admin"',
+        [u, p],
+      );
+      if (rows.isEmpty && !(u == 'admin' && p == 'admin123')) {
+        return bad('Akses ditolak', code: 401);
+      }
+      return ok({
+        'token': 'admin_${DateTime.now().millisecondsSinceEpoch}',
+        'role': 'admin',
+      });
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
 
+  r.get(
+    '/logs',
+    (Request req) => ok({
+      'logs': db
+          .select('SELECT * FROM log_pulang ORDER BY rowid DESC')
+          .toList(),
+    }),
+  );
+  r.get(
+    '/toilet-permits',
+    (Request req) => ok({
+      'permits': db
+          .select('SELECT * FROM toilet_permit ORDER BY approved_at DESC')
+          .map((r) => _mapToiletPermitRow(Map<String, Object?>.from(r)))
+          .toList(),
+    }),
+  );
+
+  r.get('/status/<id>', (Request req, String rawId) {
+    final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());
+    final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
+      id,
+    ]);
+    if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
+    return ok(Map<String, Object?>.from(rows.first));
+  });
+
+  r.post('/logs', (Request req) async {
+    try {
+      final body = jsonDecode(await req.readAsString());
+      final id = _extractBarcodeInfo(
+        body['id_karyawan']?.toString().trim() ?? '',
+      );
+      if (id.isEmpty) return bad('id_karyawan wajib');
+      final pengawas = body['status_pengawas']?.toString().trim() ?? 'PENDING';
+      final security = body['status_security']?.toString().trim() ?? 'PENDING';
+      db.execute(
+        'INSERT INTO log_pulang(id_karyawan, status_pengawas, status_security) VALUES(?, ?, ?) ON CONFLICT(id_karyawan) DO UPDATE SET status_pengawas=?, status_security=?',
+        [id, pengawas, security, pengawas, security],
+      );
+      saveLogHistory(id, pengawas, security);
+      return ok(
+        Map<String, Object?>.from(
+          db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [id]).first,
+        ),
+      );
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
+
+  r.get('/logs/<id>', (Request req, String rawId) {
+    final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());
+    final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
+      id,
+    ]);
+    if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
+    return ok(Map<String, Object?>.from(rows.first));
+  });
+
+  r.put('/logs/<id>', (Request req, String rawId) async {
+    try {
+      final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());
+      final body = jsonDecode(await req.readAsString());
+      final pengawas = body['status_pengawas']?.toString().trim() ?? 'PENDING';
+      final security = body['status_security']?.toString().trim() ?? 'PENDING';
+      db.execute(
+        'UPDATE log_pulang SET status_pengawas=?, status_security=? WHERE id_karyawan=?',
+        [pengawas, security, id],
+      );
+      saveLogHistory(id, pengawas, security);
+      final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
+        id,
+      ]);
+      if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
+      return ok(Map<String, Object?>.from(rows.first));
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
+
+  r.delete('/logs/<id>', (Request req, String rawId) {
+    try {
+      final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());
+      final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
+        id,
+      ]);
+      if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
+      db.execute('DELETE FROM log_pulang WHERE id_karyawan=?', [id]);
+      return ok({'message': 'Log berhasil dihapus', 'id_karyawan': id});
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
+
+  r.post('/scan-pengawas', (Request req) async {
+    final body = jsonDecode(await req.readAsString());
+    var id = _extractBarcodeInfo(body['id_karyawan'] ?? '');
+    final nowIso = _formatWibIso(_nowUtc());
+    db.execute(
+      'INSERT INTO log_pulang(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, pengawas_scanned_at) VALUES(?, "ACC", "PENDING", ?, ?) ON CONFLICT(id_karyawan) DO UPDATE SET status_pengawas="ACC", pengawas_scanned_by=?, pengawas_scanned_at=?;',
+      [id, body['username'], nowIso, body['username'], nowIso],
+    );
+    return ok(
+      Map<String, Object?>.from(
+        db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [id]).first,
+      ),
+    );
+  });
+
+  r.post('/scan-security', (Request req) async {
+    final body = jsonDecode(await req.readAsString());
+    var id = _extractBarcodeInfo(body['id_karyawan'] ?? '');
+    final nowIso = _formatWibIso(_nowUtc());
+    db.execute(
+      'UPDATE log_pulang SET status_security="ACC", security_scanned_by=?, security_scanned_at=? WHERE id_karyawan=?',
+      [body['username'], nowIso, id],
+    );
+    return ok(
+      Map<String, Object?>.from(
+        db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [id]).first,
+      ),
+    );
+  });
+
+  r.get(
+    '/dates-history',
+    (Request req) => ok({
+      'dates': db
+          .select(
+            'SELECT DISTINCT tanggal FROM log_pulang_history ORDER BY tanggal DESC',
+          )
+          .map((r) => r['tanggal'])
+          .toList(),
+    }),
+  );
+  r.get(
+    '/logs-history/<tanggal>',
+    (Request req, String t) => ok({
+      'logs': db.select('SELECT * FROM log_pulang_history WHERE tanggal = ?', [
+        t,
+      ]).toList(),
+    }),
+  );
+  r.get(
+    '/toilet-permits-history/<tanggal>',
+    (Request req, String t) => ok({
+      'permits': db
+          .select(
+            'SELECT * FROM toilet_permit_history WHERE tanggal = ? ORDER BY approved_at DESC',
+            [t],
+          )
+          .map((r) => _mapToiletPermitRow(Map<String, Object?>.from(r)))
+          .toList(),
+    }),
+  );
+
+  r.post('/daily-reset', (Request req) async {
+    final result = await performDailyReset(db);
+    if (result['success'] == true) return ok(result);
+    return bad(result['error']?.toString() ?? 'Daily reset failed', code: 500);
+  });
+
+  r.post('/admin/clear-logs', (Request req) {
+    try {
+      final logCount =
+          int.tryParse(
+            db
+                    .select('SELECT COUNT(*) AS count FROM log_pulang')
+                    .first['count']
+                    ?.toString() ??
+                '0',
+          ) ??
+          0;
+      final permitCount =
+          int.tryParse(
+            db
+                    .select('SELECT COUNT(*) AS count FROM toilet_permit')
+                    .first['count']
+                    ?.toString() ??
+                '0',
+          ) ??
+          0;
       db.execute('DELETE FROM log_pulang');
       db.execute('DELETE FROM toilet_permit');
-
       return ok({
         'message': 'Semua log aktif berhasil dihapus',
-        'deleted_count': deletedCount,
-        'deleted_toilet_permits': deletedPermitCount,
+        'deleted_count': logCount,
+        'deleted_toilet_permits': permitCount,
         'history_preserved': true,
       });
     } catch (e) {
@@ -1114,32 +948,50 @@ Future<Router> buildRouter(Database db) async {
     }
   });
 
-  r.post('/admin/clear-all-data', (Request req) async {
+  r.post('/admin/clear-all-data', (Request req) {
     try {
       final logCount =
-          db.select('SELECT COUNT(*) as count FROM log_pulang').first['count']
-              as int;
+          int.tryParse(
+            db
+                    .select('SELECT COUNT(*) AS count FROM log_pulang')
+                    .first['count']
+                    ?.toString() ??
+                '0',
+          ) ??
+          0;
       final historyCount =
-          db
-                  .select('SELECT COUNT(*) as count FROM log_pulang_history')
-                  .first['count']
-              as int;
+          int.tryParse(
+            db
+                    .select('SELECT COUNT(*) AS count FROM log_pulang_history')
+                    .first['count']
+                    ?.toString() ??
+                '0',
+          ) ??
+          0;
       final permitCount =
-          db
-                  .select('SELECT COUNT(*) as count FROM toilet_permit')
-                  .first['count']
-              as int;
+          int.tryParse(
+            db
+                    .select('SELECT COUNT(*) AS count FROM toilet_permit')
+                    .first['count']
+                    ?.toString() ??
+                '0',
+          ) ??
+          0;
       final permitHistoryCount =
-          db
-                  .select('SELECT COUNT(*) as count FROM toilet_permit_history')
-                  .first['count']
-              as int;
-
+          int.tryParse(
+            db
+                    .select(
+                      'SELECT COUNT(*) AS count FROM toilet_permit_history',
+                    )
+                    .first['count']
+                    ?.toString() ??
+                '0',
+          ) ??
+          0;
       db.execute('DELETE FROM log_pulang');
       db.execute('DELETE FROM log_pulang_history');
       db.execute('DELETE FROM toilet_permit');
       db.execute('DELETE FROM toilet_permit_history');
-
       return ok({
         'message': 'Semua log dan history berhasil dihapus',
         'deleted_logs': logCount,
