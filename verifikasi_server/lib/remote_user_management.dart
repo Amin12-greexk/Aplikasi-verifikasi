@@ -214,7 +214,7 @@ class _RemoteUserManagementPageState extends State<RemoteUserManagementPage> {
                       obscureText: true,
                       decoration: const InputDecoration(
                         labelText: 'Password Baru',
-                        hintText: 'Wajib diisi',
+                        hintText: 'Kosongkan jika tidak ubah',
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -277,17 +277,10 @@ class _RemoteUserManagementPageState extends State<RemoteUserManagementPage> {
                 ElevatedButton(
                   onPressed: () async {
                     final password = passwordController.text.trim();
-                    if (password.isEmpty) {
-                      _showSnack(
-                        'Password wajib diisi untuk update user',
-                        isError: true,
-                      );
-                      return;
-                    }
                     try {
                       await widget.api.updateUser(
                         id: id,
-                        password: password,
+                        password: password.isEmpty ? null : password,
                         role: role,
                         roomId: role == 'pengawas' ? roomId : null,
                       );

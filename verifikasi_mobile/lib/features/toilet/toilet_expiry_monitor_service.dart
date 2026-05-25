@@ -9,11 +9,14 @@ import 'toilet_permit_service.dart';
 class ToiletExpiryMonitorService {
   static const Duration _pollInterval = Duration(seconds: 10);
   static const String _prefsKey = 'toilet_expiry_notified_keys';
+  static const String _lastCheckedAtPrefsKey = 'toilet_expiry_last_checked_at';
+  static const int _summaryNotificationId = 44001;
 
   static Timer? _timer;
   static bool _running = false;
   static bool _checking = false;
   static bool _loaded = false;
+  static DateTime? _lastCheckedAtUtc;
   static final Set<String> _notifiedKeys = <String>{};
 
   static Future<void> start() async {
@@ -43,8 +46,12 @@ class ToiletExpiryMonitorService {
 
     _checking = true;
     try {
+      final checkedAtUtc = DateTime.now().toUtc();
+      final previousCheckedAtUtc = _lastCheckedAtUtc;
       final permits = await ToiletPermitService.fetchExpiredAlerts();
       final currentKeys = <String>{};
+      final newAlerts = <Map<String, dynamic>>[];
+      final newAlertKeys = <String>[];
 
       for (final permit in permits) {
         final key = _buildKey(permit);
@@ -54,21 +61,30 @@ class ToiletExpiryMonitorService {
           continue;
         }
 
-        final employeeLabel = _extractEmployeeLabel(
-          permit['id_karyawan']?.toString() ?? '',
+        final expiresAtUtc = _parseDateTimeUtc(
+          permit['expires_at']?.toString(),
         );
+        final isNewSinceLastCheck =
+            previousCheckedAtUtc != null &&
+            expiresAtUtc != null &&
+            expiresAtUtc.isAfter(previousCheckedAtUtc);
 
-        final shown = await LocalNotificationService.showToiletExpired(
-          id: _buildNotificationId(key),
-          title: 'Waktu toilet sudah habis',
-          body: '$employeeLabel sudah melewati batas waktu toilet.',
-        );
-        if (shown) {
+        if (!isNewSinceLastCheck) {
           _notifiedKeys.add(key);
+          continue;
         }
+
+        newAlerts.add(permit);
+        newAlertKeys.add(key);
+      }
+
+      if (newAlerts.isNotEmpty) {
+        final shown = await _showExpiryNotification(newAlerts);
+        if (shown) _notifiedKeys.addAll(newAlertKeys);
       }
 
       _notifiedKeys.removeWhere((key) => !currentKeys.contains(key));
+      _lastCheckedAtUtc = checkedAtUtc;
       await _saveState();
     } catch (e) {
       debugPrint('[ToiletExpiryMonitor] Failed to check permits: $e');
@@ -84,6 +100,44 @@ class ToiletExpiryMonitorService {
   }
 
   static int _buildNotificationId(String key) => key.hashCode & 0x7fffffff;
+
+  static Future<bool> _showExpiryNotification(
+    List<Map<String, dynamic>> alerts,
+  ) {
+    if (alerts.length == 1) {
+      final permit = alerts.first;
+      final key = _buildKey(permit);
+      final employeeLabel = _extractEmployeeLabel(
+        permit['id_karyawan']?.toString() ?? '',
+      );
+      return LocalNotificationService.showToiletExpired(
+        id: _buildNotificationId(key),
+        title: 'Waktu toilet sudah habis',
+        body: '$employeeLabel sudah melewati batas waktu toilet.',
+      );
+    }
+
+    final labels = alerts
+        .take(3)
+        .map((permit) {
+          return _extractEmployeeLabel(permit['id_karyawan']?.toString() ?? '');
+        })
+        .where((label) => label.trim().isNotEmpty)
+        .join(', ');
+    final remaining = alerts.length - 3;
+    final suffix = remaining > 0 ? ', dan $remaining lainnya' : '';
+
+    return LocalNotificationService.showToiletExpired(
+      id: _summaryNotificationId,
+      title: '${alerts.length} izin toilet melewati batas',
+      body: '$labels$suffix perlu dicek. Buka aplikasi untuk melihat daftar.',
+    );
+  }
+
+  static DateTime? _parseDateTimeUtc(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    return DateTime.tryParse(raw.trim())?.toUtc();
+  }
 
   static String _extractEmployeeLabel(String barcode) {
     final pin = _extractValue(barcode, 'PIN');
@@ -115,6 +169,9 @@ class ToiletExpiryMonitorService {
     _notifiedKeys
       ..clear()
       ..addAll(prefs.getStringList(_prefsKey) ?? const <String>[]);
+    _lastCheckedAtUtc = _parseDateTimeUtc(
+      prefs.getString(_lastCheckedAtPrefsKey),
+    );
     _loaded = true;
   }
 
@@ -122,5 +179,12 @@ class ToiletExpiryMonitorService {
     final prefs = await SharedPreferences.getInstance();
     final sortedKeys = _notifiedKeys.toList()..sort();
     await prefs.setStringList(_prefsKey, sortedKeys);
+    final lastCheckedAt = _lastCheckedAtUtc;
+    if (lastCheckedAt != null) {
+      await prefs.setString(
+        _lastCheckedAtPrefsKey,
+        lastCheckedAt.toIso8601String(),
+      );
+    }
   }
 }

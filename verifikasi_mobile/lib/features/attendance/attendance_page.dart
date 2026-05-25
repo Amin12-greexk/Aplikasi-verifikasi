@@ -116,7 +116,7 @@ class _AttendancePageState extends State<AttendancePage> {
                     if (p.contains('PIN:')) pin = p.split(':').last.trim();
                     if (p.contains('Nama:')) nama = p.split(':').last.trim();
                   }
-                  
+
                   if (pin.isNotEmpty) {
                     setState(() => _scannedNama = nama);
                     Navigator.pop(context);
@@ -307,7 +307,9 @@ class _AttendancePageState extends State<AttendancePage> {
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         backgroundColor: AppColors.surface,
                         foregroundColor: AppColors.primary,
-                        side: BorderSide(color: AppColors.primary.withAlpha(100)),
+                        side: BorderSide(
+                          color: AppColors.primary.withAlpha(100),
+                        ),
                       ),
                       onPressed: _openScanner,
                       child: const Icon(Icons.qr_code_scanner),
@@ -484,26 +486,46 @@ class _AttendancePageState extends State<AttendancePage> {
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   return DataTable(
-                    headingRowColor: MaterialStateProperty.all(AppColors.background),
+                    headingRowColor: WidgetStateProperty.all(
+                      AppColors.background,
+                    ),
                     columnSpacing: 10,
                     horizontalMargin: 12,
                     columns: [
                       DataColumn(
                         label: SizedBox(
                           width: constraints.maxWidth * 0.35,
-                          child: const Text('PIN/NAMA', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                          child: const Text(
+                            'PIN/NAMA',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11,
+                            ),
+                          ),
                         ),
                       ),
                       DataColumn(
                         label: SizedBox(
                           width: constraints.maxWidth * 0.35,
-                          child: const Text('WAKTU', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                          child: const Text(
+                            'WAKTU',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11,
+                            ),
+                          ),
                         ),
                       ),
                       DataColumn(
                         label: SizedBox(
                           width: constraints.maxWidth * 0.18,
-                          child: const Text('STATUS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                          child: const Text(
+                            'STATUS',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11,
+                            ),
+                          ),
                         ),
                       ),
                     ],
@@ -512,60 +534,77 @@ class _AttendancePageState extends State<AttendancePage> {
                       final modeColor = _modeColor(mode);
                       final pin = record['pin']?.toString() ?? '-';
                       final name = _scannedNama ?? '';
-                      
-                      return DataRow(cells: [
-                        DataCell(
-                          SizedBox(
-                            width: constraints.maxWidth * 0.35,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  pin,
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                if (name.isNotEmpty)
+
+                      return DataRow(
+                        cells: [
+                          DataCell(
+                            SizedBox(
+                              width: constraints.maxWidth * 0.35,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
                                   Text(
-                                    name,
-                                    style: const TextStyle(fontSize: 9, color: AppColors.textSecondary),
+                                    pin,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 11,
+                                    ),
                                     overflow: TextOverflow.ellipsis,
                                   ),
-                              ],
+                                  if (name.isNotEmpty)
+                                    Text(
+                                      name,
+                                      style: const TextStyle(
+                                        fontSize: 9,
+                                        color: AppColors.textSecondary,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                        DataCell(
-                          SizedBox(
-                            width: constraints.maxWidth * 0.35,
-                            child: Text(
-                              _formatDateTime(record['scan_date']?.toString()),
-                              style: const TextStyle(fontSize: 10),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ),
-                        DataCell(
-                          SizedBox(
-                            width: constraints.maxWidth * 0.18,
-                            child: UnconstrainedBox(
-                              alignment: Alignment.centerLeft,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: modeColor.withAlpha(15),
-                                  borderRadius: BorderRadius.circular(6),
+                          DataCell(
+                            SizedBox(
+                              width: constraints.maxWidth * 0.35,
+                              child: Text(
+                                _formatDateTime(
+                                  record['scan_date']?.toString(),
                                 ),
-                                child: Text(
-                                  mode,
-                                  style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: modeColor),
+                                style: const TextStyle(fontSize: 10),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                          DataCell(
+                            SizedBox(
+                              width: constraints.maxWidth * 0.18,
+                              child: UnconstrainedBox(
+                                alignment: Alignment.centerLeft,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: modeColor.withAlpha(15),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    mode,
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                      color: modeColor,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      ]);
+                        ],
+                      );
                     }).toList(),
                   );
                 },

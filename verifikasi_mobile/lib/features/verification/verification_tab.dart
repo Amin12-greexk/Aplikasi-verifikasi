@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/services/auth_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../toilet/toilet_menu_page.dart';
 import 'pulang_menu_page.dart';
@@ -12,14 +13,18 @@ class VerificationTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isSecurity = AuthService.isSecurity();
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         _MainCard(
-          title: 'Verifikasi Pulang',
-          subtitle: 'Scan tiket kepulangan & pantau status antrean pulang.',
-          icon: Icons.directions_walk,
-          color: AppColors.primary,
+          title: isSecurity ? 'Gate Security' : 'Verifikasi Pulang',
+          subtitle: isSecurity
+              ? 'Mode self service untuk scan ID Card kepulangan.'
+              : 'Scan tiket kepulangan & pantau status antrean pulang.',
+          icon: isSecurity ? Icons.sensors : Icons.directions_walk,
+          color: isSecurity ? AppColors.security : AppColors.primary,
           onTap: () {
             Navigator.push(
               context,
@@ -29,9 +34,11 @@ class VerificationTab extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         _MainCard(
-          title: 'Izin Toilet',
-          subtitle: 'Validasi izin ke toilet & pantau durasi izin aktif.',
-          icon: Icons.wc,
+          title: isSecurity ? 'Gate Toilet' : 'Izin Toilet',
+          subtitle: isSecurity
+              ? 'Mode self service untuk proof scan izin toilet.'
+              : 'Validasi izin ke toilet & pantau durasi izin aktif.',
+          icon: isSecurity ? Icons.sensors : Icons.wc,
           color: AppColors.warning,
           onTap: () {
             Navigator.push(

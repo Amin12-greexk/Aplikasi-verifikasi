@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/services/auth_service.dart';
 import '../../core/theme/app_colors.dart';
+import '../id_card/id_card_scanner_page.dart';
 import '../toilet/toilet_background_worker_service.dart';
 
 class LoginPage extends StatefulWidget {
@@ -98,10 +99,7 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              AppColors.primary.withAlpha(20),
-              AppColors.background,
-            ],
+            colors: [AppColors.primary.withAlpha(20), AppColors.background],
           ),
         ),
         child: SafeArea(
@@ -143,7 +141,7 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  
+
                   // Text elements with Slide and Fade animation
                   FadeTransition(
                     opacity: _formAnimation,
@@ -269,6 +267,40 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
                                     ),
                             ),
                           ),
+                          const SizedBox(height: 16),
+
+                          // Scan ID Card button (Outside login)
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        const IDCardScannerPage(),
+                                  ),
+                                );
+                              },
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                ),
+                                side: const BorderSide(
+                                  color: AppColors.primary,
+                                ),
+                                foregroundColor: AppColors.primary,
+                              ),
+                              icon: const Icon(Icons.qr_code_scanner),
+                              label: const Text(
+                                'Scan ID Card',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -282,5 +314,3 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
     );
   }
 }
-
-

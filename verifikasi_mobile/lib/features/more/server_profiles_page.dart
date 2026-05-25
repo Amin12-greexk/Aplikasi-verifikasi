@@ -15,8 +15,8 @@ class ServerProfilesPage extends StatefulWidget {
 }
 
 class _ServerProfilesPageState extends State<ServerProfilesPage> {
-  Map<String, bool?> _connectionStatus = {};
-  Map<String, bool> _testingStatus = {};
+  final Map<String, bool?> _connectionStatus = {};
+  final Map<String, bool> _testingStatus = {};
 
   List<ServerProfile> get _profiles => ServerProfileManager.profiles;
   ServerProfile get _activeProfile => ServerProfileManager.activeProfile;
@@ -53,7 +53,10 @@ class _ServerProfilesPageState extends State<ServerProfilesPage> {
         title: const Text('Hapus Profile'),
         content: Text('Hapus profile "${profile.name}"?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Batal'),
+          ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
@@ -69,7 +72,10 @@ class _ServerProfilesPageState extends State<ServerProfilesPage> {
         if (success) {
           setState(() {});
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Profile dihapus'), backgroundColor: AppColors.success),
+            const SnackBar(
+              content: Text('Profile dihapus'),
+              backgroundColor: AppColors.success,
+            ),
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -101,10 +107,7 @@ class _ServerProfilesPageState extends State<ServerProfilesPage> {
       appBar: AppBar(
         title: const Text('Server Profiles'),
         actions: [
-          IconButton(
-            onPressed: () => _openForm(),
-            icon: const Icon(Icons.add),
-          ),
+          IconButton(onPressed: () => _openForm(), icon: const Icon(Icons.add)),
         ],
       ),
       body: ListView(
@@ -131,10 +134,7 @@ class _ServerProfilesPageState extends State<ServerProfilesPage> {
                     children: [
                       const Text(
                         'Server Aktif',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.white70,
-                        ),
+                        style: TextStyle(fontSize: 11, color: Colors.white70),
                       ),
                       Text(
                         _activeProfile.name,
@@ -146,7 +146,10 @@ class _ServerProfilesPageState extends State<ServerProfilesPage> {
                       ),
                       Text(
                         _activeProfile.baseUrl,
-                        style: const TextStyle(fontSize: 11, color: Colors.white70),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.white70,
+                        ),
                       ),
                     ],
                   ),
@@ -212,28 +215,42 @@ class _ServerProfilesPageState extends State<ServerProfilesPage> {
               ),
               if (isActive)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.primary.withAlpha(20),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: const Text(
                     'Aktif',
-                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: AppColors.primary),
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
+                    ),
                   ),
                 ),
               if (profile.isDefault)
                 Padding(
                   padding: const EdgeInsets.only(left: 6),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.textHint.withAlpha(20),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: const Text(
                       'Default',
-                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: AppColors.textHint),
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.textHint,
+                      ),
                     ),
                   ),
                 ),
@@ -242,7 +259,10 @@ class _ServerProfilesPageState extends State<ServerProfilesPage> {
           const SizedBox(height: 6),
           Text(
             profile.baseUrl,
-            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
@@ -256,7 +276,9 @@ class _ServerProfilesPageState extends State<ServerProfilesPage> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: connectionOk ? AppColors.success.withAlpha(15) : AppColors.error.withAlpha(15),
+                color: connectionOk
+                    ? AppColors.success.withAlpha(15)
+                    : AppColors.error.withAlpha(15),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Row(
@@ -351,7 +373,14 @@ class _ServerProfilesPageState extends State<ServerProfilesPage> {
             else if (icon != null)
               Icon(icon, size: 14, color: color),
             const SizedBox(width: 4),
-            Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: color)),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: color,
+              ),
+            ),
           ],
         ),
       ),

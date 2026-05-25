@@ -18,6 +18,9 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=build /app/server /app/server
 
+# Ensure /data exists and is writable
+RUN mkdir -p /data
+
 ENV PORT=8080
 ENV DB_PATH=/data/log.db
 

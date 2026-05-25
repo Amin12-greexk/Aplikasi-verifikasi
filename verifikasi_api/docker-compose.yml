@@ -1,0 +1,24 @@
+services:
+  verifikasi-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: verifikasi-api
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - DB_PATH=/data/log.db
+      - TZ=Asia/Jakarta
+    volumes:
+      # Option 1: Named Volume (Managed by Docker - Recommended for Dokploy)
+      - verifikasi_api_data:/data
+      
+      # Option 2: Bind Mount (Direct host folder - uncomment to use)
+      # - ./data:/data
+    restart: unless-stopped
+
+# volumes: section is only needed if using Named Volume (Option 1)
+volumes:
+  verifikasi_api_data:
+    driver: local

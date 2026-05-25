@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/services/auth_service.dart';
+import '../../core/services/tts_service.dart';
 import '../../core/utils/wib_time.dart';
 import 'toilet_expiry_monitor_service.dart';
 import 'toilet_permit_service.dart';
@@ -22,19 +26,22 @@ class ToiletScannerPage extends StatefulWidget {
 }
 
 class _ToiletScannerPageState extends State<ToiletScannerPage>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   static const double _scanAreaRatio = 0.96;
   static const double _minScanAreaSize = 220.0;
-  static const Duration _sameCodeCooldown = Duration(seconds: 4);
+  static const Duration _sameCodeCooldown = Duration(
+    seconds: 1,
+  ); // reset cepat antar scan
+  static const Duration _hardwareScanSettleDelay = Duration(milliseconds: 150);
   static const List<int> _durationOptions = [5, 10, 20];
 
   final MobileScannerController _controller = MobileScannerController(
-    detectionSpeed: DetectionSpeed.noDuplicates,
-    detectionTimeoutMs: 250,
+    detectionSpeed: DetectionSpeed.normal,
+    detectionTimeoutMs: 250, // Lebih rileks agar sensor punya waktu fokus
     facing: CameraFacing.back,
     formats: [BarcodeFormat.qrCode],
-    cameraResolution: const Size(1280, 720),
-    useNewCameraSelector: false,
+    // cameraResolution dihilangkan agar sistem memilih yang paling optimal
+    useNewCameraSelector: true,
     autoStart: false,
   );
 
@@ -44,27 +51,41 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
   Color? _lastColor;
   String? _lastScannedId;
   DateTime? _lastScannedAt;
+  String? _lastScanSource;
   Timer? _clockTimer;
+  Timer? _resetTimer; // auto-reset scanner 1 detik setelah scan selesai
+  Timer? _hardwareScanDebounceTimer;
+  final StringBuffer _hardwareScanBuffer = StringBuffer();
+  final FocusNode _hardwareScannerFocusNode = FocusNode(
+    debugLabel: 'toilet-security-hardware-scanner',
+  );
   final ValueNotifier<DateTime> _currentTimeNotifier = ValueNotifier(
     WibTime.now(),
   );
-  double _zoomLevel = 0.25;
-  double _baseZoomLevel = 0.25;
+  late final AnimationController _pulseController;
+  double _zoomLevel = 0.0; // mulai dari wide — field of view paling lebar
+  double _baseZoomLevel = 0.0;
   int _selectedDuration = 10;
   AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
   bool _isCameraRunning = false;
   bool _isSyncingCamera = false;
+  bool _useCameraFallback = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       _currentTimeNotifier.value = WibTime.now();
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _syncCameraState();
+      _requestHardwareScannerFocus();
     });
   }
 
@@ -80,6 +101,11 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appLifecycleState = state;
     _syncCameraState();
+    if (state == AppLifecycleState.resumed) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _requestHardwareScannerFocus();
+      });
+    }
   }
 
   @override
@@ -87,12 +113,21 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     WidgetsBinding.instance.removeObserver(this);
     _controller.stop();
     _clockTimer?.cancel();
+    _resetTimer?.cancel();
+    _hardwareScanDebounceTimer?.cancel();
+    _hardwareScannerFocusNode.dispose();
     _currentTimeNotifier.dispose();
+    _pulseController.dispose();
     super.dispose();
   }
 
   bool get _shouldRunCamera =>
-      widget.isActive && _appLifecycleState == AppLifecycleState.resumed;
+      (widget.isPengawas || _useCameraFallback) &&
+      widget.isActive &&
+      _appLifecycleState == AppLifecycleState.resumed;
+
+  CameraFacing get _desiredCameraFacing =>
+      widget.isPengawas ? CameraFacing.back : CameraFacing.front;
 
   Future<void> _syncCameraState() async {
     if (!mounted || _isSyncingCamera) return;
@@ -103,7 +138,7 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     try {
       if (shouldRun) {
         if (!_isCameraRunning) {
-          await _controller.start();
+          await _controller.start(cameraFacingOverride: _desiredCameraFacing);
           _isCameraRunning = true;
         }
         await _controller.setZoomScale(_zoomLevel);
@@ -125,6 +160,89 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     } catch (_) {}
     _isCameraRunning = false;
     await _syncCameraState();
+  }
+
+  /// Otomatis reset scanner 1 detik setelah processing selesai.
+  /// Mencegah bug harus keluar halaman untuk bisa scan ulang.
+  void _scheduleAutoReset() {
+    _resetTimer?.cancel();
+    _resetTimer = Timer(const Duration(seconds: 1), () {
+      if (!mounted) return;
+      setState(() {
+        _lastResult = null;
+        _lastStatus = null;
+        _lastColor = null;
+        _lastScannedId = null;
+        _lastScannedAt = null;
+        _lastScanSource = null;
+        _isProcessing = false;
+      });
+      _syncCameraState();
+      _requestHardwareScannerFocus();
+    });
+  }
+
+  void _requestHardwareScannerFocus() {
+    if (!mounted || widget.isPengawas || _useCameraFallback) return;
+    if (!_hardwareScannerFocusNode.hasFocus) {
+      FocusScope.of(context).requestFocus(_hardwareScannerFocusNode);
+    }
+  }
+
+  Future<void> _setSecurityCameraFallback(bool enabled) async {
+    if (widget.isPengawas || _useCameraFallback == enabled) return;
+    _hardwareScanBuffer.clear();
+    _hardwareScanDebounceTimer?.cancel();
+    setState(() {
+      _useCameraFallback = enabled;
+      _lastScanSource = null;
+    });
+    if (enabled) _hardwareScannerFocusNode.unfocus();
+    await _syncCameraState();
+    if (!enabled) _requestHardwareScannerFocus();
+  }
+
+  KeyEventResult _handleHardwareScannerKey(FocusNode node, KeyEvent event) {
+    if (widget.isPengawas || _useCameraFallback || event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+
+    if (_isProcessing) {
+      _hardwareScanBuffer.clear();
+      _hardwareScanDebounceTimer?.cancel();
+      return KeyEventResult.handled;
+    }
+
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter ||
+        key == LogicalKeyboardKey.tab) {
+      _submitHardwareScanBuffer();
+      return KeyEventResult.handled;
+    }
+
+    final character = event.character;
+    if (character == null ||
+        character.isEmpty ||
+        character.codeUnits.any((unit) => unit < 32)) {
+      return KeyEventResult.ignored;
+    }
+
+    _hardwareScanBuffer.write(character);
+    _hardwareScanDebounceTimer?.cancel();
+    _hardwareScanDebounceTimer = Timer(
+      _hardwareScanSettleDelay,
+      _submitHardwareScanBuffer,
+    );
+    return KeyEventResult.handled;
+  }
+
+  void _submitHardwareScanBuffer() {
+    _hardwareScanDebounceTimer?.cancel();
+    final rawScan = _hardwareScanBuffer.toString().trim();
+    _hardwareScanBuffer.clear();
+    if (rawScan.isEmpty) return;
+    unawaited(_processRawScan(rawScan, source: 'scanner'));
   }
 
   String _formatClock(DateTime value) {
@@ -156,8 +274,41 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
 
   Map<String, String> _extractBarcodeInfo(String fullBarcode) {
     final info = <String, String>{};
+    final raw = fullBarcode.trim();
+    if (raw.isEmpty) return info;
+
     try {
-      final parts = fullBarcode.split('|').map((p) => p.trim()).toList();
+      // 1. Cek format CSV (N, NAMA, NIK, ...) atau (NAMA, N, NIK, ...) - Prioritas Tinggi
+      if (raw.contains(',') && !raw.contains(':')) {
+        final parts = raw.split(',');
+        if (parts.length >= 2) {
+          // Cari PIN: biasanya field yang hanya berisi angka (numeric)
+          int pinIndex = -1;
+          if (RegExp(r'^[0-9]+$').hasMatch(parts[0].trim())) {
+            pinIndex = 0;
+          } else if (RegExp(r'^[0-9]+$').hasMatch(parts[1].trim())) {
+            pinIndex = 1;
+          }
+
+          if (pinIndex != -1) {
+            final pin = parts[pinIndex].trim();
+            final nama = parts[pinIndex == 0 ? 1 : 0].trim();
+            if (pin.isEmpty || nama.isEmpty) return <String, String>{};
+
+            info['PIN'] = pin;
+            info['Nama'] = nama;
+            if (parts.length >= 10) {
+              info['Bagian'] = parts[9].trim();
+            } else if (parts.length >= 4) {
+              info['Bagian'] = parts[3].trim();
+            }
+            return info;
+          }
+        }
+      }
+
+      // 2. Format standar: PIN: xxx | Nama: yyy
+      final parts = raw.split('|').map((p) => p.trim()).toList();
       for (final part in parts) {
         final separatorIndex = part.indexOf(':');
         if (separatorIndex <= 0) continue;
@@ -177,14 +328,12 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
           info[rawKey] = value;
         }
       }
-
-      if (!info.containsKey('PIN')) {
-        final raw = fullBarcode.trim();
-        if (RegExp(r'^[0-9]{4,}$').hasMatch(raw)) {
-          info['PIN'] = raw;
-        }
-      }
     } catch (_) {}
+
+    final pin = info['PIN']?.trim() ?? '';
+    final nama = info['Nama']?.trim() ?? '';
+    if (pin.isEmpty || nama.isEmpty) return <String, String>{};
+
     return info;
   }
 
@@ -195,7 +344,7 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     final bagian = info['Bagian']?.trim() ?? '';
 
     if (pin.isEmpty && nama.isEmpty && bagian.isEmpty) {
-      return fullBarcode.trim();
+      return '';
     }
 
     final parts = <String>[];
@@ -209,57 +358,27 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     final normalized = _normalizeBarcodeForLookup(fullBarcode).trim();
     if (normalized.isNotEmpty) return normalized;
 
-    final pin = info['PIN']?.trim() ?? '';
-    if (pin.isNotEmpty) return pin;
-
-    return fullBarcode.trim();
+    return '';
   }
 
-  Future<bool> _showSecurityApprovalDialog({
+  Future<String?> _showBypassDialog({
     required String nama,
     required String pin,
-    required Map<String, dynamic> permit,
+    required String message,
   }) async {
-    final durationMinutes = permit['duration_minutes'] as int? ?? 10;
-    final approvedBy = permit['approved_by']?.toString().trim() ?? '';
-    final approvedAt = _formatTimeLabel(
-      permit['approved_at']?.toString(),
-      withSeconds: true,
-    );
-    final expiresAt = _formatTimeLabel(
-      permit['expires_at']?.toString(),
-      withSeconds: true,
-    );
-    final remaining = ToiletPermitService.remainingSecondsForPermit(permit);
-    final alreadyScanned = ToiletPermitService.isProofScanned(permit);
-    final proofBy = permit['proof_scanned_by']?.toString().trim() ?? '';
-    final proofAt = _formatTimeLabel(
-      permit['proof_scanned_at']?.toString(),
-      withSeconds: true,
-    );
+    final controller = TextEditingController();
     final employeeLabel = nama.isNotEmpty ? '$nama (PIN: $pin)' : 'PIN: $pin';
-    final waitingSecurity = ToiletPermitService.isWaitingSecurity(permit);
 
-    final proceed = await showDialog<bool>(
+    return showDialog<String>(
       context: context,
-      barrierDismissible: !alreadyScanned,
+      barrierDismissible: false,
       builder: (context) {
         return AlertDialog(
-          title: Row(
+          title: const Row(
             children: [
-              Icon(
-                alreadyScanned ? Icons.verified_user : Icons.badge,
-                color: alreadyScanned ? AppColors.success : AppColors.pengawas,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  alreadyScanned
-                      ? 'Izin Sudah Pernah Discan'
-                      : 'Sudah Izin Pengawas',
-                  style: const TextStyle(fontSize: 18),
-                ),
-              ),
+              Icon(Icons.warning_amber_rounded, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('Limit Tercapai', style: TextStyle(fontSize: 18)),
             ],
           ),
           content: Column(
@@ -268,93 +387,58 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
             children: [
               Text(
                 employeeLabel,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
-                ),
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 12),
-              _modalInfoRow(
-                'Disetujui oleh',
-                approvedBy.isEmpty ? 'Pengawas belum tercatat' : approvedBy,
+              Text(message, style: const TextStyle(fontSize: 13)),
+              const SizedBox(height: 16),
+              const Text(
+                'Alasan Bypass (misal: Diare):',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              _modalInfoRow(
-                'Jam disetujui',
-                approvedAt == '-' ? 'Belum ada jam persetujuan' : approvedAt,
-              ),
-              const SizedBox(height: 8),
-              _modalInfoRow(
-                waitingSecurity ? 'Durasi izin' : 'Batas kembali',
-                waitingSecurity
-                    ? '$durationMinutes menit'
-                    : (expiresAt == '-' ? 'Batas belum tersedia' : expiresAt),
-              ),
-              const SizedBox(height: 8),
-              _modalInfoRow(
-                waitingSecurity ? 'Timer mulai' : 'Sisa waktu',
-                waitingSecurity
-                    ? 'Saat security scan ini'
-                    : ToiletPermitService.formatRemainingDetailedLabel(
-                        remaining,
-                      ),
-              ),
-              if (alreadyScanned) ...[
-                const SizedBox(height: 8),
-                _modalInfoRow(
-                  'Security',
-                  '${proofBy.isEmpty ? 'Sudah discan security' : proofBy} ${proofAt == '-' ? '' : 'pada $proofAt'}'
-                      .trim(),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'Contoh: Sedang sakit perut/diare',
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                 ),
-              ],
+              ),
             ],
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: Text(alreadyScanned ? 'Tutup' : 'Batal'),
+              onPressed: () => Navigator.of(context).pop(null),
+              child: const Text('Batal'),
             ),
-            if (!alreadyScanned)
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Lanjut Proof Scan'),
+            FilledButton(
+              onPressed: () {
+                final reason = controller.text.trim();
+                if (reason.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Alasan bypass wajib diisi')),
+                  );
+                  return;
+                }
+                Navigator.of(context).pop(reason);
+              },
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.orange.shade800,
               ),
+              child: const Text('Bypass Izin'),
+            ),
           ],
         );
       },
     );
-
-    return proceed ?? false;
-  }
-
-  Widget _modalInfoRow(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textSecondary,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textPrimary,
-          ),
-        ),
-      ],
-    );
   }
 
   Future<void> _onDetect(BarcodeCapture capture) async {
-    if (_isProcessing) return;
-
     Barcode? barcode;
     for (final item in capture.barcodes) {
       final value = item.rawValue?.trim();
@@ -365,11 +449,41 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     }
     if (barcode == null) return;
 
-    final fullBarcode = barcode.rawValue!.trim();
-    final info = _extractBarcodeInfo(fullBarcode);
-    final scanId = _buildScanId(info, fullBarcode);
+    await _processRawScan(barcode.rawValue!.trim(), source: 'camera');
+  }
+
+  Future<void> _playSecurityFeedback(String status) async {
+    if (widget.isPengawas) return;
+
+    switch (status) {
+      case 'success':
+        await TtsService.speak('Silakan ke toilet.');
+        break;
+      case 'duplicate':
+        await TtsService.speak('Sudah discan.');
+        break;
+      case 'waiting':
+        await TtsService.speak('Izin valid.');
+        break;
+      default:
+        await TtsService.speak('Ditolak.');
+    }
+  }
+
+  Future<void> _processRawScan(
+    String fullBarcode, {
+    required String source,
+  }) async {
+    if (_isProcessing) return;
+
+    final raw = fullBarcode.trim();
+    if (raw.isEmpty) return;
+
+    final info = _extractBarcodeInfo(raw);
+    final scanId = _buildScanId(info, raw);
     final pin = info['PIN'] ?? '';
     final nama = info['Nama'] ?? '';
+    final employeeLabel = nama.isNotEmpty ? '$nama (PIN: $pin)' : 'PIN: $pin';
     final now = DateTime.now();
 
     if (_lastScannedId == scanId &&
@@ -385,54 +499,57 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
         _lastResult = 'QR tidak dikenal';
         _lastStatus = 'error';
         _lastColor = AppColors.error;
+        _lastScanSource = source;
       });
+      unawaited(_playSecurityFeedback('error'));
+      _scheduleAutoReset();
       return;
     }
 
-    setState(() => _isProcessing = true);
+    setState(() {
+      _isProcessing = true;
+      _lastScanSource = source;
+    });
 
     try {
       Map<String, dynamic> result;
       if (widget.isPengawas) {
-        result = await ToiletPermitService.approvePermit(
-          scanId,
-          durationMinutes: _selectedDuration,
-        );
-      } else {
-        final permitStatus = await ToiletPermitService.fetchPermitStatus(
-          scanId,
-        );
-        if (ToiletPermitService.isExpiredPermit(permitStatus)) {
+        try {
+          result = await ToiletPermitService.approvePermit(
+            scanId,
+            durationMinutes: _selectedDuration,
+          );
+        } on LimitExceededException catch (e) {
+          // Show bypass dialog
+          final bypassData = await _showBypassDialog(
+            nama: nama,
+            pin: pin,
+            message: e.message,
+          );
+          if (bypassData == null || !mounted) {
+            setState(() => _isProcessing = false);
+            return;
+          }
+
+          setState(() => _isProcessing = true);
+          result = await ToiletPermitService.approvePermit(
+            scanId,
+            durationMinutes: _selectedDuration,
+            isBypass: true,
+            bypassReason: bypassData,
+          );
+        } on QuotaFullException catch (e) {
           setState(() {
-            _lastResult = '$nama (PIN: $pin)\nIzin toilet sudah habis';
+            _lastResult = '$employeeLabel\n${e.message}';
             _lastStatus = 'error';
             _lastColor = AppColors.error;
           });
           return;
         }
-
-        final shouldContinue = await _showSecurityApprovalDialog(
-          nama: nama,
-          pin: pin,
-          permit: permitStatus,
-        );
-        if (!mounted) return;
-        if (!shouldContinue) {
-          if (ToiletPermitService.isProofScanned(permitStatus)) {
-            final proofBy = permitStatus['proof_scanned_by']?.toString().trim();
-            final proofAt = _formatTimeLabel(
-              permitStatus['proof_scanned_at']?.toString(),
-              withSeconds: true,
-            );
-            setState(() {
-              _lastResult =
-                  '$nama (PIN: $pin)\nSudah pernah discan security${proofBy == null || proofBy.isEmpty ? '' : ' oleh $proofBy'}${proofAt == '-' ? '' : ' pada $proofAt'}';
-              _lastStatus = 'duplicate';
-              _lastColor = AppColors.warning;
-            });
-          }
-          return;
-        }
+      } else {
+        // Optimasi Performance: Langsung panggil proofScan tanpa fetchPermitStatus dulu.
+        // Server akan mengembalikan error jika izin sudah habis atau sudah discan.
+        // Ini menghemat 1 round-trip network (lebih cepat ~500ms).
         result = await ToiletPermitService.proofScan(scanId);
       }
 
@@ -450,21 +567,24 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
           : '$message\nMulai: $proofStartLabel | Batas: $expiryLabel\nSisa waktu: ${ToiletPermitService.formatRemainingLabel(remaining)}';
 
       setState(() {
-        _lastResult = '$nama (PIN: $pin)\n$details';
+        _lastResult = '$employeeLabel\n$details';
         _lastStatus = isDuplicate ? 'duplicate' : 'success';
         _lastColor = isDuplicate ? AppColors.warning : AppColors.success;
       });
+      unawaited(_playSecurityFeedback(isDuplicate ? 'duplicate' : 'success'));
       await ToiletExpiryMonitorService.refreshNow();
     } catch (e) {
       final errorStr = _userErrorMessage(e);
       setState(() {
-        _lastResult = '$nama (PIN: $pin)\n$errorStr';
+        _lastResult = '$employeeLabel\n$errorStr';
         _lastStatus = 'error';
         _lastColor = AppColors.error;
       });
+      unawaited(_playSecurityFeedback('error'));
     } finally {
       if (mounted) {
         setState(() => _isProcessing = false);
+        _scheduleAutoReset(); // reset otomatis 1 detik setelah scan selesai
       }
     }
   }
@@ -476,18 +596,552 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Scan Toilet',
-          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+        title: Column(
+          children: [
+            Text(
+              isPengawas ? 'Scan Toilet' : 'Gate Toilet',
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+            ),
+            if (isPengawas && AuthService.roomName != null)
+              Text(
+                'Ruang: ${AuthService.roomName}',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+          ],
         ),
         backgroundColor: AppColors.surface,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
         centerTitle: true,
       ),
-      backgroundColor: Colors.black,
-      body: _buildScannerBox(isPengawas, isLocked),
+      backgroundColor: isPengawas ? Colors.black : AppColors.background,
+      body: isPengawas
+          ? _buildScannerBox(isPengawas, isLocked)
+          : _buildSecuritySelfService(isLocked),
     );
+  }
+
+  Widget _buildSecuritySelfService(bool isLocked) {
+    final color = _lastColor ?? AppColors.warning;
+    final hasResult = _lastResult != null;
+
+    return Focus(
+      focusNode: _hardwareScannerFocusNode,
+      autofocus: true,
+      onKeyEvent: _handleHardwareScannerKey,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _requestHardwareScannerFocus,
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth >= 720;
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight - 40,
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          _buildClockChip(),
+                          const SizedBox(width: 10),
+                          Expanded(child: _buildHardwareFocusChip()),
+                          const SizedBox(width: 8),
+                          _buildInputModeButton(),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      if (isWide)
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              flex: 3,
+                              child: _buildSelfServiceHero(
+                                isLocked: isLocked,
+                                color: color,
+                              ),
+                            ),
+                            const SizedBox(width: 18),
+                            Expanded(
+                              flex: 2,
+                              child: _buildSelfServiceResultPanel(
+                                hasResult: hasResult,
+                                color: color,
+                              ),
+                            ),
+                          ],
+                        )
+                      else ...[
+                        _buildSelfServiceHero(isLocked: isLocked, color: color),
+                        const SizedBox(height: 18),
+                        _buildSelfServiceResultPanel(
+                          hasResult: hasResult,
+                          color: color,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHardwareFocusChip() {
+    return AnimatedBuilder(
+      animation: _hardwareScannerFocusNode,
+      builder: (context, _) {
+        if (_useCameraFallback) {
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.info.withAlpha(18),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.info.withAlpha(45)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.camera_front, size: 18, color: AppColors.info),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Kamera depan aktif',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.info,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final isFocused = _hardwareScannerFocusNode.hasFocus;
+        final color = isFocused ? AppColors.success : AppColors.warning;
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: color.withAlpha(18),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: color.withAlpha(45)),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                isFocused ? Icons.sensors : Icons.touch_app,
+                size: 18,
+                color: color,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  isFocused
+                      ? 'Scanner fisik aktif'
+                      : 'Ketuk layar untuk scanner',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: color,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildInputModeButton() {
+    return FilledButton.icon(
+      onPressed: () => _setSecurityCameraFallback(!_useCameraFallback),
+      icon: Icon(
+        _useCameraFallback ? Icons.sensors : Icons.camera_front,
+        size: 18,
+      ),
+      label: Text(_useCameraFallback ? 'Scanner' : 'Kamera'),
+      style: FilledButton.styleFrom(
+        backgroundColor: _useCameraFallback
+            ? AppColors.success
+            : AppColors.info,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  Widget _buildSelfServiceHero({required bool isLocked, required Color color}) {
+    final title = isLocked
+        ? 'Memproses Izin'
+        : _lastStatus == 'success'
+        ? 'Izin Aktif'
+        : _lastStatus == 'duplicate'
+        ? 'Sudah Discan'
+        : _lastStatus == 'error'
+        ? 'Izin Tidak Valid'
+        : 'Perlihatkan ID Card ke scanner';
+    final subtitle = isLocked
+        ? 'Mohon tunggu sebentar'
+        : _lastStatus == 'success'
+        ? 'Timer toilet dimulai dari scan security ini'
+        : _lastStatus == 'duplicate'
+        ? 'Mitra sudah pernah melakukan scan security'
+        : _lastStatus == 'error'
+        ? 'Cek izin pengawas atau coba scan ulang'
+        : 'QR akan terbaca otomatis oleh scanner';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withAlpha(45)),
+        boxShadow: [
+          BoxShadow(
+            color: color.withAlpha(18),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          if (_useCameraFallback)
+            _buildSecurityCameraPreview(color)
+          else
+            AnimatedBuilder(
+              animation: _pulseController,
+              builder: (context, child) {
+                final scale = 1 + (_pulseController.value * 0.06);
+                return Transform.scale(scale: scale, child: child);
+              },
+              child: Container(
+                width: 148,
+                height: 148,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: color.withAlpha(18),
+                  border: Border.all(color: color.withAlpha(70), width: 2),
+                ),
+                child: isLocked
+                    ? Padding(
+                        padding: const EdgeInsets.all(35),
+                        child: CircularProgressIndicator(
+                          color: color,
+                          strokeWidth: 4,
+                        ),
+                      )
+                    : Icon(
+                        _lastStatus == 'success'
+                            ? Icons.timer
+                            : _lastStatus == 'duplicate'
+                            ? Icons.info
+                            : _lastStatus == 'error'
+                            ? Icons.error
+                            : Icons.wc,
+                        size: 78,
+                        color: color,
+                      ),
+              ),
+            ),
+          const SizedBox(height: 24),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 30,
+              height: 1.1,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 16,
+              height: 1.35,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 22),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.cardBorder),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.badge_outlined,
+                  size: 18,
+                  color: AppColors.textSecondary,
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    _lastScanSource == 'scanner'
+                        ? 'Input terakhir: scanner fisik'
+                        : _lastScanSource == 'camera'
+                        ? 'Input terakhir: kamera depan'
+                        : 'Menunggu scan ID Card',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSecurityCameraPreview(Color color) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: SizedBox(
+        height: 300,
+        width: double.infinity,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final scannerSize = constraints.biggest;
+            final scanAreaSize = (scannerSize.shortestSide * 0.72).clamp(
+              170.0,
+              scannerSize.shortestSide,
+            );
+
+            return Stack(
+              children: [
+                Transform(
+                  alignment: Alignment.center,
+                  transform: Matrix4.rotationY(
+                    _desiredCameraFacing == CameraFacing.front ? math.pi : 0,
+                  ),
+                  child: MobileScanner(
+                    controller: _controller,
+                    onDetect: _onDetect,
+                    errorBuilder: (context, error, child) {
+                      final message =
+                          error.errorCode ==
+                              MobileScannerErrorCode.permissionDenied
+                          ? 'Izin kamera ditolak. Aktifkan izin kamera di pengaturan aplikasi.'
+                          : 'Kamera depan gagal dijalankan. Tekan tombol refresh.';
+                      return Transform(
+                        alignment: Alignment.center,
+                        transform: Matrix4.rotationY(
+                          _desiredCameraFacing == CameraFacing.front
+                              ? math.pi
+                              : 0,
+                        ),
+                        child: Container(
+                          color: Colors.black,
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.videocam_off,
+                                color: Colors.white,
+                                size: 34,
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                message,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              if (error.errorCode !=
+                                  MobileScannerErrorCode.permissionDenied) ...[
+                                const SizedBox(height: 14),
+                                FilledButton.icon(
+                                  onPressed: _retryCamera,
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('Coba Lagi'),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                IgnorePointer(child: _buildScannerOverlay(scanAreaSize)),
+                Positioned(
+                  top: 12,
+                  left: 12,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withAlpha(130),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white.withAlpha(35)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.camera_front, size: 16, color: Colors.white),
+                        SizedBox(width: 6),
+                        Text(
+                          'Kamera depan',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: color.withAlpha(120),
+                          width: 2,
+                        ),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelfServiceResultPanel({
+    required bool hasResult,
+    required Color color,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Status Izin Toilet',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (_isProcessing)
+            const _SecurityStatusTile(
+              icon: Icons.sync,
+              title: 'Memproses',
+              subtitle: 'Data izin sedang dikirim ke server',
+              color: AppColors.info,
+              showProgress: true,
+            )
+          else if (hasResult)
+            _SecurityStatusTile(
+              icon: _resultIcon(),
+              title: _resultTitle(),
+              subtitle: _lastResult ?? '',
+              color: color,
+            )
+          else
+            const _SecurityStatusTile(
+              icon: Icons.sensors,
+              title: 'Siap',
+              subtitle: 'Scanner fisik siap menerima QR ID Card',
+              color: AppColors.warning,
+            ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.cardBorder),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.info_outline, size: 18, color: AppColors.info),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Delay scan ulang mengikuti mode security sebelumnya.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.35,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _resultIcon() {
+    switch (_lastStatus) {
+      case 'success':
+        return Icons.timer;
+      case 'duplicate':
+        return Icons.info;
+      default:
+        return Icons.error;
+    }
+  }
+
+  String _resultTitle() {
+    switch (_lastStatus) {
+      case 'success':
+        return 'Berhasil';
+      case 'duplicate':
+        return 'Sudah Discan';
+      default:
+        return 'Error';
+    }
   }
 
   Widget _buildScannerBox(bool isPengawas, bool isLocked) {
@@ -504,11 +1158,6 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
             minScanAreaSize,
             shortestSide,
           );
-          final scanWindow = Rect.fromCenter(
-            center: Offset(scannerSize.width / 2, scannerSize.height / 2),
-            width: scanAreaSize,
-            height: scanAreaSize,
-          );
 
           return GestureDetector(
             onScaleStart: (_) {
@@ -520,51 +1169,69 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
             },
             child: Stack(
               children: [
-                MobileScanner(
-                  controller: _controller,
-                  onDetect: _onDetect,
-                  scanWindow: scanWindow,
-                  errorBuilder: (context, error, child) {
-                    final message =
-                        error.errorCode ==
-                            MobileScannerErrorCode.permissionDenied
-                        ? 'Izin kamera ditolak. Aktifkan izin kamera di pengaturan aplikasi.'
-                        : 'Kamera gagal dijalankan. Tekan tombol di bawah untuk mencoba lagi.';
-                    return Container(
-                      color: Colors.black,
-                      alignment: Alignment.center,
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.videocam_off,
-                            color: Colors.white,
-                            size: 34,
+                // Mirroring untuk kamera depan (jika bukan pengawas)
+                Transform(
+                  alignment: Alignment.center,
+                  transform: Matrix4.rotationY(
+                    _desiredCameraFacing == CameraFacing.front ? math.pi : 0,
+                  ),
+                  child: MobileScanner(
+                    controller: _controller,
+                    onDetect: _onDetect,
+                    // scanWindow dilepas agar lebih responsif mendeteksi QR
+                    // meskipun sedikit di luar kotak overlay
+                    errorBuilder: (context, error, child) {
+                      final message =
+                          error.errorCode ==
+                              MobileScannerErrorCode.permissionDenied
+                          ? 'Izin kamera ditolak. Aktifkan izin kamera di pengaturan aplikasi.'
+                          : 'Kamera gagal dijalankan. Tekan tombol di bawah untuk mencoba lagi.';
+
+                      // Un-mirror error builder content
+                      return Transform(
+                        alignment: Alignment.center,
+                        transform: Matrix4.rotationY(
+                          _desiredCameraFacing == CameraFacing.front
+                              ? math.pi
+                              : 0,
+                        ),
+                        child: Container(
+                          color: Colors.black,
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.videocam_off,
+                                color: Colors.white,
+                                size: 34,
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                message,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              if (error.errorCode !=
+                                  MobileScannerErrorCode.permissionDenied) ...[
+                                const SizedBox(height: 14),
+                                FilledButton.icon(
+                                  onPressed: _retryCamera,
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('Coba Lagi'),
+                                ),
+                              ],
+                            ],
                           ),
-                          const SizedBox(height: 10),
-                          Text(
-                            message,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          if (error.errorCode !=
-                              MobileScannerErrorCode.permissionDenied) ...[
-                            const SizedBox(height: 14),
-                            FilledButton.icon(
-                              onPressed: _retryCamera,
-                              icon: const Icon(Icons.refresh),
-                              label: const Text('Coba Lagi'),
-                            ),
-                          ],
-                        ],
-                      ),
-                    );
-                  },
+                        ),
+                      );
+                    },
+                  ),
                 ),
                 IgnorePointer(child: _buildScannerOverlay(scanAreaSize)),
                 if (!isLocked)
@@ -597,24 +1264,19 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
                     ],
                   ),
                 ),
+                // Zoom slider — di atas result overlay
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: _lastResult != null ? 90 : 18,
+                  child: _buildZoomSlider(),
+                ),
                 if (_lastResult != null)
                   Positioned(
                     left: 16,
                     right: 16,
                     bottom: 18,
                     child: _buildResultOverlay(),
-                  ),
-                if (_isProcessing)
-                  Positioned.fill(
-                    child: Container(
-                      color: Colors.black.withAlpha(120),
-                      child: const Center(
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 3,
-                        ),
-                      ),
-                    ),
                   ),
               ],
             ),
@@ -680,11 +1342,16 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
           return Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             child: InkWell(
-              onTap: isLocked ? null : () => setState(() => _selectedDuration = duration),
+              onTap: isLocked
+                  ? null
+                  : () => setState(() => _selectedDuration = duration),
               borderRadius: BorderRadius.circular(10),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: isSelected ? AppColors.pengawas : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
@@ -743,36 +1410,193 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     );
   }
 
-  Widget _buildResultOverlay() {
+  Widget _buildZoomSlider() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.black.withAlpha(135),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: (_lastColor ?? Colors.white).withAlpha(110)),
+        color: Colors.black.withAlpha(115),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: Colors.white.withAlpha(40)),
       ),
       child: Row(
         children: [
-          Icon(
-            _lastStatus == 'success'
-                ? Icons.check_circle
-                : _lastStatus == 'duplicate'
-                ? Icons.info
-                : Icons.error,
-            color: _lastColor ?? Colors.white,
-            size: 24,
-          ),
-          const SizedBox(width: 10),
+          const Icon(Icons.zoom_out, color: Colors.white70, size: 18),
           Expanded(
-            child: Text(
-              _lastResult ?? '',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: _lastColor == AppColors.warning
-                    ? Colors.white
-                    : (_lastColor ?? Colors.white),
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                activeTrackColor: AppColors.primaryLight,
+                inactiveTrackColor: Colors.white24,
+                thumbColor: Colors.white,
+                overlayColor: AppColors.primary.withAlpha(40),
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                trackHeight: 3,
               ),
+              child: Slider(
+                value: _zoomLevel,
+                min: 0.0,
+                max: 1.0,
+                onChanged: _onZoomChanged,
+              ),
+            ),
+          ),
+          const Icon(Icons.zoom_in, color: Colors.white70, size: 18),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResultOverlay() {
+    final color = _lastColor ?? Colors.white;
+    final IconData icon;
+    final String label;
+    switch (_lastStatus) {
+      case 'success':
+        icon = Icons.check_circle_rounded;
+        label = 'BERHASIL';
+        break;
+      case 'duplicate':
+        icon = Icons.info_rounded;
+        label = 'SUDAH DI-SCAN';
+        break;
+      case 'error':
+        icon = Icons.error_rounded;
+        label = 'ERROR';
+        break;
+      default:
+        icon = Icons.info_rounded;
+        label = 'INFO';
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      decoration: BoxDecoration(
+        // Solid — tidak transparan agar mudah dibaca
+        color: color == AppColors.success
+            ? const Color(0xFF1B5E20)
+            : color == AppColors.warning
+            ? const Color(0xFF7B4F00)
+            : color == AppColors.error
+            ? const Color(0xFF7F0000)
+            : const Color(0xFF1A237E),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: color.withAlpha(100),
+            blurRadius: 24,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 40),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _lastResult ?? '',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SecurityStatusTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final bool showProgress;
+
+  const _SecurityStatusTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+    this.showProgress = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withAlpha(14),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withAlpha(35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: color.withAlpha(22),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: showProgress
+                ? SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: color,
+                    ),
+                  )
+                : Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    height: 1.35,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

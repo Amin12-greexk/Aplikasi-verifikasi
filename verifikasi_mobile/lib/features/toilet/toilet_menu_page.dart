@@ -29,10 +29,12 @@ class ToiletMenuPage extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           _MenuCard(
-            title: 'Scan Toilet',
-            subtitle: 'Buka kamera untuk validasi izin',
-            icon: Icons.wc,
-            color: AppColors.primary,
+            title: isPengawas ? 'Scan Toilet' : 'Gate Toilet',
+            subtitle: isPengawas
+                ? 'Buka kamera untuk validasi izin'
+                : 'Standby scanner fisik untuk proof scan izin',
+            icon: isPengawas ? Icons.wc : Icons.sensors,
+            color: isPengawas ? AppColors.primary : AppColors.warning,
             onTap: () {
               Navigator.push(
                 context,

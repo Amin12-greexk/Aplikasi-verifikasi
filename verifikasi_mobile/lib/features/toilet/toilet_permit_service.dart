@@ -2,6 +2,20 @@ import '../../core/network/base_api_client.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/utils/wib_time.dart';
 
+class LimitExceededException implements Exception {
+  final String message;
+  LimitExceededException(this.message);
+  @override
+  String toString() => message;
+}
+
+class QuotaFullException implements Exception {
+  final String message;
+  QuotaFullException(this.message);
+  @override
+  String toString() => message;
+}
+
 /// API client for toilet permit approval, timer, and proof scan flows.
 class ToiletPermitService {
   static const String stateActive = 'active';
@@ -95,9 +109,7 @@ class ToiletPermitService {
       'permit_state': permitState,
       'remaining_seconds': remainingSeconds,
       'countdown_started': countdownStarted,
-      'is_active': preserveHistoryState
-          ? permitState != stateExpired
-          : permitState != stateExpired,
+      'is_active': permitState != stateExpired,
     };
   }
 
@@ -165,28 +177,23 @@ class ToiletPermitService {
 
   static String formatRemainingLabel(int seconds) {
     if (seconds <= 0) return 'Habis';
-
     final hours = seconds ~/ 3600;
     final minutes = (seconds % 3600) ~/ 60;
     final secs = seconds % 60;
-
-    if (hours > 0) {
-      return '${hours}j ${minutes.toString().padLeft(2, '0')}m';
-    }
+    if (hours > 0) return '${hours}j ${minutes.toString().padLeft(2, '0')}m';
     return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
   }
 
   static String formatRemainingDetailedLabel(int seconds) {
-    if (seconds <= 0) return '0 detik';
-
+    if (seconds <= 0) return 'Habis';
     final hours = seconds ~/ 3600;
     final minutes = (seconds % 3600) ~/ 60;
     final secs = seconds % 60;
-    final parts = <String>[];
 
+    List<String> parts = [];
     if (hours > 0) parts.add('$hours jam');
-    if (minutes > 0 || hours > 0) parts.add('$minutes menit');
-    parts.add('$secs detik');
+    if (minutes > 0) parts.add('$minutes menit');
+    if (secs > 0 || (hours == 0 && minutes == 0)) parts.add('$secs detik');
 
     return parts.join(' ');
   }
@@ -194,6 +201,8 @@ class ToiletPermitService {
   static Future<Map<String, dynamic>> approvePermit(
     String idKaryawan, {
     required int durationMinutes,
+    bool isBypass = false,
+    String? bypassReason,
   }) async {
     final response = await BaseApiClient.post(
       '/toilet-permit/approve',
@@ -201,10 +210,20 @@ class ToiletPermitService {
         'id_karyawan': idKaryawan,
         'username': AuthService.username,
         'duration_minutes': durationMinutes,
+        'is_bypass': isBypass,
+        'bypass_reason': bypassReason,
       },
     );
     final data = BaseApiClient.tryJson(response.body);
     if (response.statusCode >= 400) {
+      if (data['error'] == 'LIMIT_EXCEEDED') {
+        throw LimitExceededException(
+          data['message'] ?? 'Limit harian tercapai',
+        );
+      }
+      if (data['error'] == 'QUOTA_FULL') {
+        throw QuotaFullException(data['message'] ?? 'Kuota ruangan penuh');
+      }
       throw Exception(
         _resolveErrorMessage(
           data,
@@ -255,16 +274,6 @@ class ToiletPermitService {
 
   static Future<List<Map<String, dynamic>>> fetchActivePermits() async {
     final response = await BaseApiClient.get('/toilet-permits');
-    if (response.statusCode >= 400) {
-      final body = BaseApiClient.tryJson(response.body);
-      throw Exception(
-        _resolveErrorMessage(
-          body,
-          'Gagal mengambil izin toilet',
-          statusCode: response.statusCode,
-        ),
-      );
-    }
     final body = BaseApiClient.tryJson(response.body);
     final List<dynamic> permits = body['permits'] ?? [];
     return _normalizePermitList(permits);
@@ -272,16 +281,6 @@ class ToiletPermitService {
 
   static Future<List<Map<String, dynamic>>> fetchExpiredAlerts() async {
     final response = await BaseApiClient.get('/toilet-permits-alerts');
-    if (response.statusCode >= 400) {
-      final body = BaseApiClient.tryJson(response.body);
-      throw Exception(
-        _resolveErrorMessage(
-          body,
-          'Gagal mengambil alert izin toilet',
-          statusCode: response.statusCode,
-        ),
-      );
-    }
     final body = BaseApiClient.tryJson(response.body);
     final List<dynamic> alerts = body['alerts'] ?? [];
     return _normalizePermitList(alerts);
@@ -308,16 +307,6 @@ class ToiletPermitService {
     String date,
   ) async {
     final response = await BaseApiClient.get('/toilet-permits-history/$date');
-    if (response.statusCode >= 400) {
-      final body = BaseApiClient.tryJson(response.body);
-      throw Exception(
-        _resolveErrorMessage(
-          body,
-          'Gagal mengambil riwayat izin toilet',
-          statusCode: response.statusCode,
-        ),
-      );
-    }
     final body = BaseApiClient.tryJson(response.body);
     final List<dynamic> permits = body['permits'] ?? [];
     return _normalizePermitList(permits, preserveHistoryState: true);

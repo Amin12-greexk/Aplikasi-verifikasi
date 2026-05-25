@@ -1,13 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../config/server_profile_manager.dart';
 
 /// Profile-aware HTTP client with retry + timeout logic.
 class BaseApiClient {
-  static const int maxRetries = 3;
-  static const Duration timeout = Duration(seconds: 10);
-  static const Duration retryDelay = Duration(seconds: 2);
+  static const int maxRetries = 1;          // scanner real-time: cukup 1x retry
+  static const Duration timeout = Duration(seconds: 5); // 5s cukup, tidak perlu tunggu lama
+  static const Duration retryDelay = Duration(milliseconds: 500); // retry cepat
+
+  /// Persistent client for connection pooling/keep-alive
+  static final http.Client _client = http.Client();
 
   /// Resolve base URL from active server profile
   static String get baseUrl => ServerProfileManager.activeProfile.baseUrl;
@@ -26,17 +30,17 @@ class BaseApiClient {
       );
       return response;
     } on TimeoutException catch (e) {
-      print('[API] Timeout: $e');
+      debugPrint('[API] Timeout: $e');
       if (retries < maxRetries) {
-        print('[API] Retrying after timeout (attempt ${retries + 1}/$maxRetries)');
+        debugPrint('[API] Retrying after timeout (attempt ${retries + 1}/$maxRetries)');
         await Future.delayed(retryDelay);
         return makeRequest(request, retries: retries + 1);
       }
       rethrow;
     } catch (e) {
-      print('[API] Error: $e');
+      debugPrint('[API] Error: $e');
       if (_isConnectionError(e) && retries < maxRetries) {
-        print('[API] Connection error, retrying (attempt ${retries + 1}/$maxRetries)');
+        debugPrint('[API] Connection error, retrying (attempt ${retries + 1}/$maxRetries)');
         await Future.delayed(retryDelay * (retries + 1));
         return makeRequest(request, retries: retries + 1);
       }
@@ -66,7 +70,7 @@ class BaseApiClient {
   // ── Convenience HTTP methods ──
 
   static Future<http.Response> get(String path) {
-    return makeRequest(() => http.get(Uri.parse('$baseUrl$path')));
+    return makeRequest(() => _client.get(Uri.parse('$baseUrl$path')));
   }
 
   static Future<http.Response> post(
@@ -74,7 +78,7 @@ class BaseApiClient {
     Map<String, dynamic>? body,
   }) {
     return makeRequest(
-      () => http.post(
+      () => _client.post(
         Uri.parse('$baseUrl$path'),
         headers: {'Content-Type': 'application/json'},
         body: body != null ? jsonEncode(body) : null,
@@ -87,7 +91,7 @@ class BaseApiClient {
     Map<String, dynamic>? body,
   }) {
     return makeRequest(
-      () => http.put(
+      () => _client.put(
         Uri.parse('$baseUrl$path'),
         headers: {'Content-Type': 'application/json'},
         body: body != null ? jsonEncode(body) : null,
@@ -97,7 +101,7 @@ class BaseApiClient {
 
   static Future<http.Response> delete(String path) {
     return makeRequest(
-      () => http.delete(
+      () => _client.delete(
         Uri.parse('$baseUrl$path'),
         headers: {'Content-Type': 'application/json'},
       ),
@@ -108,7 +112,7 @@ class BaseApiClient {
   static Future<bool> checkConnectivity({String? url}) async {
     final targetUrl = url ?? baseUrl;
     try {
-      final response = await http
+      final response = await _client
           .get(Uri.parse('$targetUrl/logs'))
           .timeout(
             const Duration(seconds: 5),
@@ -116,7 +120,7 @@ class BaseApiClient {
           );
       return response.statusCode >= 200 && response.statusCode < 500;
     } catch (e) {
-      print('[API] Connection check failed: $e');
+      debugPrint('[API] Connection check failed: $e');
       return false;
     }
   }

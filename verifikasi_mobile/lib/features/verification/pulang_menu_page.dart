@@ -29,10 +29,12 @@ class PulangMenuPage extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           _MenuCard(
-            title: 'Scan Pulang',
-            subtitle: 'Buka kamera untuk scan QR',
-            icon: Icons.qr_code_scanner,
-            color: AppColors.primary,
+            title: isPengawas ? 'Scan Pulang' : 'Gate Self Service',
+            subtitle: isPengawas
+                ? 'Buka kamera untuk scan QR'
+                : 'Standby scanner fisik untuk ID Card mitra',
+            icon: isPengawas ? Icons.qr_code_scanner : Icons.sensors,
+            color: isPengawas ? AppColors.primary : AppColors.security,
             onTap: () {
               Navigator.push(
                 context,

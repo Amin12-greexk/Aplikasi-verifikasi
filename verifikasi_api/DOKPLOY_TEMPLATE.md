@@ -1,6 +1,30 @@
 # Dokploy Deployment Template - verifikasi_api
 
-Template ini untuk deploy `verifikasi_api` sebagai **Application** (bukan Compose) di Dokploy.
+Anda memiliki dua pilihan untuk deploy: menggunakan **Application (UI-based)** atau **Docker Compose**.
+
+---
+
+## OPSI A: Docker Compose (Recommended)
+
+Gunakan file `docker-compose.yml` yang sudah disediakan di repo.
+
+### 1) Create Compose
+
+Gunakan service type: `Compose`.
+
+### 2) Configuration
+
+Salin isi dari `docker-compose.yml` ke editor Dokploy, atau hubungkan ke repo dan arahkan ke file tersebut.
+
+### 3) Environment Variables
+
+Pastikan variabel di `.env` sudah sesuai atau tambahkan di tab Environment Dokploy.
+
+---
+
+## OPSI B: Dokploy Application (UI-based)
+
+Template ini untuk deploy `verifikasi_api` sebagai **Application** di Dokploy.
 
 ## 1) Create Application
 

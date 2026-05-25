@@ -65,9 +65,10 @@ class _ManagerDashboardPageState extends State<ManagerDashboardPage> {
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () async {
+              final navigator = Navigator.of(context);
               await AuthService.logout();
               if (mounted) {
-                Navigator.of(context).pushReplacementNamed('/login');
+                navigator.pushReplacementNamed('/login');
               }
             },
           ),
@@ -76,38 +77,38 @@ class _ManagerDashboardPageState extends State<ManagerDashboardPage> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('Error: $_error', textAlign: TextAlign.center),
-                      const SizedBox(height: 16),
-                      ElevatedButton(
-                        onPressed: _fetchDashboardData,
-                        child: const Text('Coba Lagi'),
-                      ),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('Error: $_error', textAlign: TextAlign.center),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: _fetchDashboardData,
+                    child: const Text('Coba Lagi'),
                   ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _fetchDashboardData,
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildSummaryCards(),
-                        const SizedBox(height: 24),
-                        _buildSectionTitle('Top 5 Toilet Hari Ini'),
-                        _buildToiletList(_data?['top_toilet_today'] ?? []),
-                        const SizedBox(height: 24),
-                        _buildSectionTitle('Top 5 Toilet Seluruh Waktu'),
-                        _buildToiletList(_data?['top_toilet_all_time'] ?? []),
-                        const SizedBox(height: 80), // Space for fab or bottom
-                      ],
-                    ),
-                  ),
+                ],
+              ),
+            )
+          : RefreshIndicator(
+              onRefresh: _fetchDashboardData,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildSummaryCards(),
+                    const SizedBox(height: 24),
+                    _buildSectionTitle('Top 5 Toilet Hari Ini'),
+                    _buildToiletList(_data?['top_toilet_today'] ?? []),
+                    const SizedBox(height: 24),
+                    _buildSectionTitle('Top 5 Toilet Seluruh Waktu'),
+                    _buildToiletList(_data?['top_toilet_all_time'] ?? []),
+                    const SizedBox(height: 80), // Space for fab or bottom
+                  ],
                 ),
+              ),
+            ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
           Navigator.push(
@@ -281,11 +282,16 @@ class _ManagerDashboardPageState extends State<ManagerDashboardPage> {
           final pin = _extractPin(rawId);
           final count = item['count'] ?? 0;
           final totalMinutes = item['total_minutes'] ?? 0;
-          
+
           return ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 8,
+            ),
             leading: CircleAvatar(
-              backgroundColor: index < 3 ? AppColors.error.withAlpha(20) : AppColors.background,
+              backgroundColor: index < 3
+                  ? AppColors.error.withAlpha(20)
+                  : AppColors.background,
               child: Text(
                 '${index + 1}',
                 style: TextStyle(
@@ -306,16 +312,27 @@ class _ManagerDashboardPageState extends State<ManagerDashboardPage> {
                 if (pin.isNotEmpty)
                   Text(
                     'PIN: $pin',
-                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 const SizedBox(height: 2),
                 Row(
                   children: [
-                    const Icon(Icons.timer_outlined, size: 12, color: AppColors.textHint),
+                    const Icon(
+                      Icons.timer_outlined,
+                      size: 12,
+                      color: AppColors.textHint,
+                    ),
                     const SizedBox(width: 4),
                     Text(
                       'Total: $totalMinutes menit',
-                      style: const TextStyle(fontSize: 11, color: AppColors.info, fontWeight: FontWeight.w500),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.info,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ],
                 ),
@@ -341,10 +358,7 @@ class _ManagerDashboardPageState extends State<ManagerDashboardPage> {
                   ),
                   const Text(
                     'kali',
-                    style: TextStyle(
-                      color: AppColors.error,
-                      fontSize: 9,
-                    ),
+                    style: TextStyle(color: AppColors.error, fontSize: 9),
                   ),
                 ],
               ),

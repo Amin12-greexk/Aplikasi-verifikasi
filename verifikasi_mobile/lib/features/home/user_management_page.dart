@@ -53,7 +53,9 @@ class _UserManagementPageState extends State<UserManagementPage> {
 
   Future<void> _showUserDialog([Map<String, dynamic>? user]) async {
     final isEditing = user != null;
-    final usernameController = TextEditingController(text: user?['username'] ?? '');
+    final usernameController = TextEditingController(
+      text: user?['username'] ?? '',
+    );
     final passwordController = TextEditingController();
     String selectedRole = user?['role'] ?? 'pengawas';
 
@@ -79,13 +81,22 @@ class _UserManagementPageState extends State<UserManagementPage> {
                   obscureText: true,
                 ),
                 const SizedBox(height: 16),
-                const Text('Pilih Role:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                const Text(
+                  'Pilih Role:',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
                 DropdownButton<String>(
                   value: selectedRole,
                   isExpanded: true,
                   items: const [
-                    DropdownMenuItem(value: 'pengawas', child: Text('Pengawas')),
-                    DropdownMenuItem(value: 'security', child: Text('Security')),
+                    DropdownMenuItem(
+                      value: 'pengawas',
+                      child: Text('Pengawas'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'security',
+                      child: Text('Security'),
+                    ),
                     DropdownMenuItem(value: 'manager', child: Text('Manager')),
                   ],
                   onChanged: (val) {
@@ -109,9 +120,17 @@ class _UserManagementPageState extends State<UserManagementPage> {
       ),
     );
 
+    if (!mounted) {
+      usernameController.dispose();
+      passwordController.dispose();
+      return;
+    }
+
     if (result == true) {
       final username = usernameController.text.trim();
       final password = passwordController.text.trim();
+      usernameController.dispose();
+      passwordController.dispose();
 
       if (password.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -124,7 +143,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
         final url = isEditing
             ? '${ServerConfig.baseUrl}/admin/users/${user['id']}'
             : '${ServerConfig.baseUrl}/admin/users';
-        
+
         final response = await (isEditing
             ? http.put(
                 Uri.parse(url),
@@ -142,10 +161,18 @@ class _UserManagementPageState extends State<UserManagementPage> {
               ));
 
         if (response.statusCode == 200) {
-          _fetchUsers();
+          if (!mounted) return;
+          await _fetchUsers();
+          if (!mounted) return;
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(isEditing ? 'User berhasil diupdate' : 'User berhasil ditambah')),
+              SnackBar(
+                content: Text(
+                  isEditing
+                      ? 'User berhasil diupdate'
+                      : 'User berhasil ditambah',
+                ),
+              ),
             );
           }
         } else {
@@ -154,11 +181,14 @@ class _UserManagementPageState extends State<UserManagementPage> {
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Error: $e')));
         }
       }
+    } else {
+      usernameController.dispose();
+      passwordController.dispose();
     }
   }
 
@@ -169,7 +199,10 @@ class _UserManagementPageState extends State<UserManagementPage> {
         title: const Text('Hapus User'),
         content: Text('Apakah Anda yakin ingin menghapus user "$username"?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Batal')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Hapus', style: TextStyle(color: Colors.red)),
@@ -186,13 +219,16 @@ class _UserManagementPageState extends State<UserManagementPage> {
         );
 
         if (response.statusCode == 200) {
-          _fetchUsers();
+          if (!mounted) return;
+          await _fetchUsers();
         } else {
           throw Exception('Gagal menghapus user');
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Error: $e')));
         }
       }
     }
@@ -201,53 +237,63 @@ class _UserManagementPageState extends State<UserManagementPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Manajemen Akun'),
-      ),
+      appBar: AppBar(title: const Text('Manajemen Akun')),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(child: Text('Error: $_error'))
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _users.length,
-                  itemBuilder: (context, index) {
-                    final user = _users[index];
-                    final role = user['role']?.toString() ?? '';
-                    final roleColor = role == 'manager' 
-                        ? AppColors.manager 
-                        : (role == 'pengawas' ? AppColors.pengawas : AppColors.security);
+          ? Center(child: Text('Error: $_error'))
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: _users.length,
+              itemBuilder: (context, index) {
+                final user = _users[index];
+                final role = user['role']?.toString() ?? '';
+                final roleColor = role == 'manager'
+                    ? AppColors.manager
+                    : (role == 'pengawas'
+                          ? AppColors.pengawas
+                          : AppColors.security);
 
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: roleColor.withAlpha(30),
-                          child: Icon(
-                            role == 'manager' ? Icons.stars : (role == 'pengawas' ? Icons.badge : Icons.security),
-                            color: roleColor,
-                          ),
-                        ),
-                        title: Text(user['username'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: Text('Role: ${role.toUpperCase()}'),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.edit, color: Colors.blue),
-                              onPressed: () => _showUserDialog(user),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => _deleteUser(user['id'], user['username']),
-                            ),
-                          ],
-                        ),
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: roleColor.withAlpha(30),
+                      child: Icon(
+                        role == 'manager'
+                            ? Icons.stars
+                            : (role == 'pengawas'
+                                  ? Icons.badge
+                                  : Icons.security),
+                        color: roleColor,
                       ),
-                    );
-                  },
-                ),
+                    ),
+                    title: Text(
+                      user['username'] ?? '',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text('Role: ${role.toUpperCase()}'),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit, color: Colors.blue),
+                          onPressed: () => _showUserDialog(user),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () =>
+                              _deleteUser(user['id'], user['username']),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showUserDialog(),
         icon: const Icon(Icons.person_add),

@@ -35,9 +35,16 @@ class _CRUDLogPageState extends State<CRUDLogPage> {
     setState(() => _isLoading = true);
     try {
       final logs = await VerificationService.fetchLogs();
-      if (mounted) setState(() { _logs = logs; _isLoading = false; });
+      if (mounted) {
+        setState(() {
+          _logs = logs;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -126,6 +133,8 @@ class _CRUDLogPageState extends State<CRUDLogPage> {
           ),
           ElevatedButton(
             onPressed: () async {
+              final dialogNavigator = Navigator.of(ctx);
+              final messenger = ScaffoldMessenger.of(context);
               try {
                 if (isEdit) {
                   await VerificationService.updateLogStatus(
@@ -140,25 +149,26 @@ class _CRUDLogPageState extends State<CRUDLogPage> {
                     _securityController.text,
                   );
                 }
-                if (mounted) {
-                  Navigator.pop(ctx);
-                  _loadLogs();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(isEdit ? 'Log diperbarui' : 'Log ditambahkan'),
-                      backgroundColor: AppColors.success,
+                if (!mounted) return;
+                dialogNavigator.pop();
+                await _loadLogs();
+                if (!mounted) return;
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      isEdit ? 'Log diperbarui' : 'Log ditambahkan',
                     ),
-                  );
-                }
+                    backgroundColor: AppColors.success,
+                  ),
+                );
               } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Error: $e'),
-                      backgroundColor: AppColors.error,
-                    ),
-                  );
-                }
+                if (!mounted) return;
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text('Error: $e'),
+                    backgroundColor: AppColors.error,
+                  ),
+                );
               }
             },
             child: Text(isEdit ? 'Update' : 'Simpan'),
@@ -175,7 +185,10 @@ class _CRUDLogPageState extends State<CRUDLogPage> {
         title: const Text('Hapus Log'),
         content: const Text('Yakin ingin menghapus log ini?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Batal'),
+          ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
@@ -191,13 +204,19 @@ class _CRUDLogPageState extends State<CRUDLogPage> {
         _loadLogs();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Log dihapus'), backgroundColor: AppColors.success),
+            const SnackBar(
+              content: Text('Log dihapus'),
+              backgroundColor: AppColors.success,
+            ),
           );
         }
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.error),
+            SnackBar(
+              content: Text('Error: $e'),
+              backgroundColor: AppColors.error,
+            ),
           );
         }
       }
@@ -211,74 +230,83 @@ class _CRUDLogPageState extends State<CRUDLogPage> {
         title: const Text('Kelola Data Log'),
         actions: [
           IconButton(onPressed: _loadLogs, icon: const Icon(Icons.refresh)),
-          IconButton(onPressed: () => _showFormDialog(), icon: const Icon(Icons.add)),
+          IconButton(
+            onPressed: () => _showFormDialog(),
+            icon: const Icon(Icons.add),
+          ),
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.primary),
+            )
           : _logs.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.inbox, size: 48, color: AppColors.textHint),
-                      const SizedBox(height: 8),
-                      const Text('Tidak ada data', style: TextStyle(color: AppColors.textSecondary)),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.inbox, size: 48, color: AppColors.textHint),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Tidak ada data',
+                    style: TextStyle(color: AppColors.textSecondary),
                   ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _logs.length,
-                  itemBuilder: (context, index) {
-                    final log = _logs[index];
-                    final id = log['id_karyawan'] ?? '';
-                    final info = _extractEmployeeInfo(id);
-                    final statusP = log['status_pengawas'] ?? 'pending';
-                    final statusS = log['status_security'] ?? 'pending';
+                ],
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: _logs.length,
+              itemBuilder: (context, index) {
+                final log = _logs[index];
+                final id = log['id_karyawan'] ?? '';
+                final info = _extractEmployeeInfo(id);
+                final statusP = log['status_pengawas'] ?? 'pending';
+                final statusS = log['status_security'] ?? 'pending';
 
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: AppColors.surface,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: AppColors.cardBorder),
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppColors.cardBorder),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        info,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      const SizedBox(height: 8),
+                      Row(
                         children: [
-                          Text(info,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
-                            ),
+                          _buildStatusBadge('Pengawas', statusP),
+                          const SizedBox(width: 8),
+                          _buildStatusBadge('Security', statusS),
+                          const Spacer(),
+                          IconButton(
+                            icon: const Icon(Icons.edit, size: 18),
+                            onPressed: () => _showFormDialog(log: log),
+                            color: AppColors.info,
                           ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              _buildStatusBadge('Pengawas', statusP),
-                              const SizedBox(width: 8),
-                              _buildStatusBadge('Security', statusS),
-                              const Spacer(),
-                              IconButton(
-                                icon: const Icon(Icons.edit, size: 18),
-                                onPressed: () => _showFormDialog(log: log),
-                                color: AppColors.info,
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete, size: 18),
-                                onPressed: () => _deleteLog(id),
-                                color: AppColors.error,
-                              ),
-                            ],
+                          IconButton(
+                            icon: const Icon(Icons.delete, size: 18),
+                            onPressed: () => _deleteLog(id),
+                            color: AppColors.error,
                           ),
                         ],
                       ),
-                    );
-                  },
-                ),
+                    ],
+                  ),
+                );
+              },
+            ),
     );
   }
 
@@ -287,7 +315,9 @@ class _CRUDLogPageState extends State<CRUDLogPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: (isApproved ? AppColors.success : AppColors.warning).withAlpha(20),
+        color: (isApproved ? AppColors.success : AppColors.warning).withAlpha(
+          20,
+        ),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Row(

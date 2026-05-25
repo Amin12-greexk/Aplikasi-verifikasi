@@ -233,14 +233,18 @@ class RemoteApiService {
 
   Future<void> updateUser({
     required int id,
-    required String password,
+    String? password,
     required String role,
     int? roomId,
   }) async {
+    final body = <String, dynamic>{'role': role, 'room_id': roomId};
+    if (password != null && password.isNotEmpty) {
+      body['password'] = password;
+    }
     await _sendJson(
       method: 'PUT',
       path: '/admin/users/$id',
-      body: {'password': password, 'role': role, 'room_id': roomId},
+      body: body,
     );
   }
 
