@@ -9,6 +9,37 @@ String _generateToken(String username, String role) {
   return 'token_${username}_${role}_${DateTime.now().millisecondsSinceEpoch}';
 }
 
+String _cleanBarcodeValue(String value) {
+  var cleaned = value.trim();
+  while (cleaned.startsWith("'") ||
+      cleaned.startsWith('"') ||
+      cleaned.startsWith('`')) {
+    cleaned = cleaned.substring(1).trimLeft();
+  }
+  while (cleaned.endsWith("'") ||
+      cleaned.endsWith('"') ||
+      cleaned.endsWith('`')) {
+    cleaned = cleaned.substring(0, cleaned.length - 1).trimRight();
+  }
+  return cleaned;
+}
+
+void _putBarcodeField(Map<String, String> info, String key, String value) {
+  final cleanedValue = _cleanBarcodeValue(value);
+  if (cleanedValue.isEmpty) return;
+
+  final normalizedKey = key.trim().toLowerCase();
+  if (normalizedKey == 'pin') {
+    info['PIN'] = cleanedValue;
+  } else if (normalizedKey == 'nama' || normalizedKey == 'name') {
+    info['Nama'] = cleanedValue;
+  } else if (normalizedKey == 'nik') {
+    info['NIK'] = cleanedValue;
+  } else if (normalizedKey == 'bagian' || normalizedKey == 'department') {
+    info['Bagian'] = cleanedValue;
+  }
+}
+
 Map<String, String> _parseBarcodeInfo(String fullBarcode) {
   final info = <String, String>{};
   final raw = fullBarcode.trim();
@@ -16,7 +47,7 @@ Map<String, String> _parseBarcodeInfo(String fullBarcode) {
 
   try {
     if (raw.contains(',') && !raw.contains(':')) {
-      final parts = raw.split(',').map((part) => part.trim()).toList();
+      final parts = raw.split(',').map(_cleanBarcodeValue).toList();
       if (parts.length >= 2) {
         var pinIndex = -1;
         if (RegExp(r'^[0-9]+$').hasMatch(parts[0])) {
@@ -32,6 +63,9 @@ Map<String, String> _parseBarcodeInfo(String fullBarcode) {
 
           info['PIN'] = pin;
           info['Nama'] = nama;
+          if (parts.length >= 3 && parts[2].isNotEmpty) {
+            info['NIK'] = parts[2];
+          }
           if (parts.length >= 10) {
             info['Bagian'] = parts[9];
           } else if (parts.length >= 4) {
@@ -42,31 +76,28 @@ Map<String, String> _parseBarcodeInfo(String fullBarcode) {
       }
     }
 
-    final parts = raw.split('|').map((part) => part.trim()).toList();
+    final parts = raw
+        .split(RegExp(r'[|\r\n]+'))
+        .map((part) => part.trim())
+        .toList();
     for (final part in parts) {
       final separatorIndex = part.indexOf(':');
       if (separatorIndex <= 0) continue;
 
       final key = part.substring(0, separatorIndex).trim();
       final value = part.substring(separatorIndex + 1).trim();
-      if (value.isEmpty) continue;
-
-      final normalizedKey = key.toLowerCase();
-      if (normalizedKey == 'pin') {
-        info['PIN'] = value;
-      } else if (normalizedKey == 'nama') {
-        info['Nama'] = value;
-      } else if (normalizedKey == 'bagian') {
-        info['Bagian'] = value;
-      }
+      _putBarcodeField(info, key, value);
     }
   } catch (_) {
     return <String, String>{};
   }
 
   final pin = info['PIN']?.trim() ?? '';
+  final nik = info['NIK']?.trim() ?? '';
   final nama = info['Nama']?.trim() ?? '';
-  if (pin.isEmpty || nama.isEmpty) return <String, String>{};
+  if (nama.isEmpty || (pin.isEmpty && nik.isEmpty)) {
+    return <String, String>{};
+  }
 
   return info;
 }
@@ -74,12 +105,17 @@ Map<String, String> _parseBarcodeInfo(String fullBarcode) {
 String _extractBarcodeInfo(String fullBarcode) {
   final info = _parseBarcodeInfo(fullBarcode);
   final pin = info['PIN']?.trim() ?? '';
+  final nik = info['NIK']?.trim() ?? '';
   final nama = info['Nama']?.trim() ?? '';
   final bagian = info['Bagian']?.trim() ?? '';
-  if (pin.isEmpty || nama.isEmpty) return '';
+  if (nama.isEmpty || (pin.isEmpty && nik.isEmpty)) return '';
 
   final parts = <String>[];
-  parts.add('PIN: $pin');
+  if (nik.isNotEmpty) {
+    parts.add('NIK: $nik');
+  } else {
+    parts.add('PIN: $pin');
+  }
   parts.add('Nama: $nama');
   if (bagian.isNotEmpty) parts.add('Bagian: $bagian');
   return parts.join(' | ');
@@ -568,11 +604,11 @@ Future<Router> buildRouter(Database db) async {
   r.post('/toilet-permit/proof-scan', (Request req) async {
     try {
       final body = jsonDecode(await req.readAsString());
-      var id = _extractBarcodeInfo(
-        body['id_karyawan']?.toString().trim() ?? '',
-      );
+      final rawId = body['id_karyawan']?.toString().trim() ?? '';
+      var id = _extractBarcodeInfo(rawId);
+      if (id.isEmpty) id = rawId;
       final username = body['username']?.toString().trim();
-      if (id.isEmpty) return bad('QR tidak dikenal');
+      if (id.isEmpty) return bad('Data QR kosong');
       if (username == null || username.isEmpty) return bad('Username wajib');
 
       final rows = db.select(
@@ -854,7 +890,9 @@ Future<Router> buildRouter(Database db) async {
     '/logs',
     (Request req) => ok({
       'logs': db
-          .select('SELECT * FROM log_pulang ORDER BY rowid DESC')
+          .select(
+            'SELECT * FROM log_pulang ORDER BY COALESCE(security_scanned_at, pengawas_scanned_at, created_at) DESC',
+          )
           .toList(),
     }),
   );
@@ -967,9 +1005,31 @@ Future<Router> buildRouter(Database db) async {
 
   r.post('/scan-security', (Request req) async {
     final body = jsonDecode(await req.readAsString());
-    var id = _extractBarcodeInfo(body['id_karyawan']?.toString().trim() ?? '');
-    if (id.isEmpty) return bad('QR tidak dikenal');
+    final rawId = body['id_karyawan']?.toString().trim() ?? '';
+    var id = _extractBarcodeInfo(rawId);
+    if (id.isEmpty) id = rawId;
+    if (id.isEmpty) return bad('Data QR kosong');
     final nowIso = _formatWibIso(_nowUtc());
+    final currentRows = db.select(
+      'SELECT * FROM log_pulang WHERE id_karyawan=?',
+      [id],
+    );
+    if (currentRows.isEmpty) {
+      return bad('Belum ada ACC pengawas untuk ID Card ini', code: 404);
+    }
+
+    final current = Map<String, Object?>.from(currentRows.first);
+    final statusPengawas = current['status_pengawas']?.toString().toUpperCase();
+    if (statusPengawas != 'ACC') {
+      return bad('Belum di-ACC Pengawas', code: 403);
+    }
+
+    final statusSecurity = current['status_security']?.toString().toUpperCase();
+    if (statusSecurity == 'ACC') {
+      current['message'] = 'Sudah di-scan Security';
+      return ok(current);
+    }
+
     db.execute(
       'UPDATE log_pulang SET status_security="ACC", security_scanned_by=?, security_scanned_at=? WHERE id_karyawan=?',
       [body['username'], nowIso, id],
@@ -977,8 +1037,9 @@ Future<Router> buildRouter(Database db) async {
     final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
       id,
     ]);
-    if (rows.isEmpty) return bad('Belum di-ACC Pengawas', code: 404);
-    return ok(Map<String, Object?>.from(rows.first));
+    final result = Map<String, Object?>.from(rows.first);
+    result['message'] = 'Berhasil ACC security';
+    return ok(result);
   });
 
   r.get(

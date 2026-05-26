@@ -78,10 +78,16 @@ class _ToiletStatusPageState extends State<ToiletStatusPage> {
     try {
       final nama = _extractValue(fullBarcode, 'Nama');
       final pin = _extractValue(fullBarcode, 'PIN');
+      final nik = _extractValue(fullBarcode, 'NIK');
       final bagian = _extractValue(fullBarcode, 'Bagian');
 
       if (nama.isNotEmpty && pin.isNotEmpty) {
         var result = '$nama (PIN: $pin)';
+        if (bagian.isNotEmpty) result += ' - $bagian';
+        return result;
+      }
+      if (nama.isNotEmpty && nik.isNotEmpty) {
+        var result = '$nama (NIK: $nik)';
         if (bagian.isNotEmpty) result += ' - $bagian';
         return result;
       }

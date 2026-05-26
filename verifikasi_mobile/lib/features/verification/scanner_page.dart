@@ -33,7 +33,10 @@ class _ScannerPageState extends State<ScannerPage>
   static const Duration _sameCodeCooldown = Duration(
     seconds: 1,
   ); // reset cepat antar scan
-  static const Duration _hardwareScanSettleDelay = Duration(milliseconds: 150);
+  static const Duration _hardwareScanSettleDelay = Duration(milliseconds: 80);
+  static const Duration _hardwareScanIncompleteDelay = Duration(
+    milliseconds: 650,
+  );
 
   final MobileScannerController _controller = MobileScannerController(
     detectionSpeed: DetectionSpeed.normal,
@@ -52,6 +55,9 @@ class _ScannerPageState extends State<ScannerPage>
   String? _lastScannedId;
   DateTime? _lastScannedAt;
   String? _lastScanSource;
+  List<Map<String, dynamic>> _scanLogs = [];
+  bool _isLoadingScanLogs = false;
+  String? _scanLogsError;
   Timer? _clockTimer;
   Timer? _resetTimer; // auto-reset scanner 1 detik setelah scan selesai
   Timer? _hardwareScanDebounceTimer;
@@ -83,6 +89,7 @@ class _ScannerPageState extends State<ScannerPage>
       _currentTimeNotifier.value = WibTime.now();
     });
     _flushOfflineQueue();
+    unawaited(_loadScanLogs());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _syncCameraState();
       _requestHardwareScannerFocus();
@@ -190,6 +197,34 @@ class _ScannerPageState extends State<ScannerPage>
     }
   }
 
+  Future<void> _loadScanLogs({bool showLoading = true}) async {
+    if (showLoading && mounted) {
+      setState(() {
+        _isLoadingScanLogs = true;
+        _scanLogsError = null;
+      });
+    }
+
+    try {
+      final logs = await VerificationService.fetchLogs();
+      if (!mounted) return;
+      setState(() {
+        _scanLogs = logs;
+        _isLoadingScanLogs = false;
+        _scanLogsError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingScanLogs = false;
+        _scanLogsError = e.toString().replaceFirst(
+          RegExp(r'^Exception:\s*'),
+          '',
+        );
+      });
+    }
+  }
+
   Future<void> _setSecurityCameraFallback(bool enabled) async {
     if (widget.isPengawas || _useCameraFallback == enabled) return;
     _hardwareScanBuffer.clear();
@@ -218,7 +253,7 @@ class _ScannerPageState extends State<ScannerPage>
     if (key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter ||
         key == LogicalKeyboardKey.tab) {
-      _submitHardwareScanBuffer();
+      _submitHardwareScanBuffer(force: true);
       return KeyEventResult.handled;
     }
 
@@ -238,11 +273,24 @@ class _ScannerPageState extends State<ScannerPage>
     return KeyEventResult.handled;
   }
 
-  void _submitHardwareScanBuffer() {
+  bool _hasCompleteHardwareScanPayload(String rawScan) {
+    return rawScan.trim().isNotEmpty;
+  }
+
+  void _submitHardwareScanBuffer({bool force = false}) {
     _hardwareScanDebounceTimer?.cancel();
     final rawScan = _hardwareScanBuffer.toString().trim();
-    _hardwareScanBuffer.clear();
     if (rawScan.isEmpty) return;
+
+    if (!force && !_hasCompleteHardwareScanPayload(rawScan)) {
+      _hardwareScanDebounceTimer = Timer(
+        _hardwareScanIncompleteDelay,
+        () => _submitHardwareScanBuffer(force: true),
+      );
+      return;
+    }
+
+    _hardwareScanBuffer.clear();
     unawaited(_processRawScan(rawScan, source: 'scanner'));
   }
 
@@ -251,6 +299,74 @@ class _ScannerPageState extends State<ScannerPage>
     final m = time.minute.toString().padLeft(2, '0');
     final s = time.second.toString().padLeft(2, '0');
     return '$h:$m:$s';
+  }
+
+  String _formatTimeLabel(String? raw) {
+    final formatted = WibTime.formatTime(raw);
+    if (formatted != '-') return formatted;
+
+    if (raw == null || raw.isEmpty || raw == '-') return '-';
+    if (raw.contains(':')) {
+      final parts = raw.split(':');
+      if (parts.length >= 2) {
+        return '${parts[0].padLeft(2, '0')}:${parts[1].padLeft(2, '0')}';
+      }
+    }
+    return raw;
+  }
+
+  bool _isApproved(Object? status) =>
+      VerificationService.isApprovedStatus(status);
+
+  String _employeeNameFromLog(Map<String, dynamic> log) {
+    final raw = log['id_karyawan']?.toString() ?? '';
+    final info = _extractBarcodeInfo(raw);
+    final nama = info['Nama']?.trim() ?? '';
+    final pin = info['PIN']?.trim() ?? '';
+    final nik = info['NIK']?.trim() ?? '';
+
+    if (nama.isEmpty) return raw.isEmpty ? '-' : raw;
+    if (pin.isNotEmpty) return '$nama (PIN: $pin)';
+    if (nik.isNotEmpty) return '$nama (NIK: $nik)';
+    return nama;
+  }
+
+  String _employeeDepartmentFromLog(Map<String, dynamic> log) {
+    final raw = log['id_karyawan']?.toString() ?? '';
+    final info = _extractBarcodeInfo(raw);
+    return info['Bagian']?.trim() ?? '';
+  }
+
+  String _scanLogStatusLabel(Map<String, dynamic> log) {
+    final pengawasDone = _isApproved(log['status_pengawas']);
+    final securityDone = _isApproved(log['status_security']);
+    if (pengawasDone && securityDone) return 'Selesai';
+    if (pengawasDone) return 'Menunggu Security';
+    return 'Menunggu Pengawas';
+  }
+
+  Color _scanLogStatusColor(Map<String, dynamic> log) {
+    final pengawasDone = _isApproved(log['status_pengawas']);
+    final securityDone = _isApproved(log['status_security']);
+    if (pengawasDone && securityDone) return AppColors.success;
+    if (pengawasDone) return AppColors.info;
+    return AppColors.warning;
+  }
+
+  IconData _scanLogStatusIcon(Map<String, dynamic> log) {
+    final pengawasDone = _isApproved(log['status_pengawas']);
+    final securityDone = _isApproved(log['status_security']);
+    if (pengawasDone && securityDone) return Icons.check_circle;
+    if (pengawasDone) return Icons.hourglass_top;
+    return Icons.pending;
+  }
+
+  String _scanLogTime(Map<String, dynamic> log) {
+    final securityDone = _isApproved(log['status_security']);
+    final raw = securityDone
+        ? log['security_scanned_at']?.toString()
+        : log['pengawas_scanned_at']?.toString();
+    return _formatTimeLabel(raw);
   }
 
   void _onZoomChanged(double value) {
@@ -284,7 +400,38 @@ class _ScannerPageState extends State<ScannerPage>
     }
   }
 
-  /// Extract PIN, Nama, and Bagian from barcode string to match server format
+  String _cleanBarcodeValue(String value) {
+    var cleaned = value.trim();
+    while (cleaned.startsWith("'") ||
+        cleaned.startsWith('"') ||
+        cleaned.startsWith('`')) {
+      cleaned = cleaned.substring(1).trimLeft();
+    }
+    while (cleaned.endsWith("'") ||
+        cleaned.endsWith('"') ||
+        cleaned.endsWith('`')) {
+      cleaned = cleaned.substring(0, cleaned.length - 1).trimRight();
+    }
+    return cleaned;
+  }
+
+  void _putBarcodeField(Map<String, String> info, String key, String value) {
+    final cleanedValue = _cleanBarcodeValue(value);
+    if (cleanedValue.isEmpty) return;
+
+    final normalizedKey = key.trim().toLowerCase();
+    if (normalizedKey == 'pin') {
+      info['PIN'] = cleanedValue;
+    } else if (normalizedKey == 'nama' || normalizedKey == 'name') {
+      info['Nama'] = cleanedValue;
+    } else if (normalizedKey == 'nik') {
+      info['NIK'] = cleanedValue;
+    } else if (normalizedKey == 'bagian' || normalizedKey == 'department') {
+      info['Bagian'] = cleanedValue;
+    }
+  }
+
+  /// Extract PIN/NIK, Nama, and Bagian from barcode string to match server format
   Map<String, String> _extractBarcodeInfo(String fullBarcode) {
     final info = <String, String>{};
     final raw = fullBarcode.trim();
@@ -293,33 +440,36 @@ class _ScannerPageState extends State<ScannerPage>
     try {
       // 1. Cek format CSV (N, NAMA, NIK, ...) atau (NAMA, N, NIK, ...) - Prioritas Tinggi
       if (raw.contains(',') && !raw.contains(':')) {
-        final parts = raw.split(',');
+        final parts = raw.split(',').map(_cleanBarcodeValue).toList();
         if (parts.length >= 2) {
           // Cari PIN: biasanya field yang hanya berisi angka (numeric)
           // Kita cek 2 index pertama karena posisi PIN bisa di index 0 atau 1
           int pinIndex = -1;
-          if (RegExp(r'^[0-9]+$').hasMatch(parts[0].trim())) {
+          if (RegExp(r'^[0-9]+$').hasMatch(parts[0])) {
             pinIndex = 0;
-          } else if (RegExp(r'^[0-9]+$').hasMatch(parts[1].trim())) {
+          } else if (RegExp(r'^[0-9]+$').hasMatch(parts[1])) {
             pinIndex = 1;
           }
 
           if (pinIndex != -1) {
-            final pin = parts[pinIndex].trim();
-            final nama = parts[pinIndex == 0 ? 1 : 0].trim();
+            final pin = parts[pinIndex];
+            final nama = parts[pinIndex == 0 ? 1 : 0];
             if (pin.isEmpty || nama.isEmpty) return <String, String>{};
 
             info['PIN'] = pin;
             // Nama adalah index yang bukan PIN (antara 0 atau 1)
             info['Nama'] = nama;
+            if (parts.length >= 3 && parts[2].isNotEmpty) {
+              info['NIK'] = parts[2];
+            }
 
             // Cari Bagian: biasanya di field yang mengandung kata 'Group' atau index ke-4 (Sarirejo...)
             // atau mengikuti header standar index ke-9. Kita coba cari yang paling masuk akal.
             if (parts.length >= 10) {
-              info['Bagian'] = parts[9].trim();
+              info['Bagian'] = parts[9];
             } else if (parts.length >= 4) {
               // Jika data lebih pendek, coba ambil field ke-4 (index 3)
-              info['Bagian'] = parts[3].trim();
+              info['Bagian'] = parts[3];
             }
             return info;
           }
@@ -327,24 +477,16 @@ class _ScannerPageState extends State<ScannerPage>
       }
 
       // 2. Format standar: PIN: xxx | Nama: yyy
-      final parts = raw.split('|').map((p) => p.trim()).toList();
+      final parts = raw
+          .split(RegExp(r'[|\r\n]+'))
+          .map((p) => p.trim())
+          .toList();
       for (final part in parts) {
         final separatorIndex = part.indexOf(':');
         if (separatorIndex > 0) {
           final rawKey = part.substring(0, separatorIndex).trim();
           final value = part.substring(separatorIndex + 1).trim();
-          if (value.isEmpty) continue;
-
-          final normalizedKey = rawKey.toLowerCase();
-          if (normalizedKey == 'pin') {
-            info['PIN'] = value;
-          } else if (normalizedKey == 'nama') {
-            info['Nama'] = value;
-          } else if (normalizedKey == 'bagian') {
-            info['Bagian'] = value;
-          } else {
-            info[rawKey] = value;
-          }
+          _putBarcodeField(info, rawKey, value);
         }
       }
     } catch (e) {
@@ -352,33 +494,53 @@ class _ScannerPageState extends State<ScannerPage>
     }
 
     final pin = info['PIN']?.trim() ?? '';
+    final nik = info['NIK']?.trim() ?? '';
     final nama = info['Nama']?.trim() ?? '';
-    if (pin.isEmpty || nama.isEmpty) return <String, String>{};
+    if (nama.isEmpty || (pin.isEmpty && nik.isEmpty)) {
+      return <String, String>{};
+    }
 
     return info;
   }
 
   /// Normalize barcode to same format as server storage:
-  /// `PIN: xxx | Nama: yyy | Bagian: zzz`
-  String _normalizeBarcodeForLookup(String fullBarcode) {
-    final info = _extractBarcodeInfo(fullBarcode);
+  /// `NIK: xxx | Nama: yyy | Bagian: zzz`
+  /// or `PIN: xxx | Nama: yyy | Bagian: zzz` when NIK is empty.
+  String _normalizeBarcodeInfoForLookup(Map<String, String> info) {
     final pin = info['PIN']?.trim() ?? '';
+    final nik = info['NIK']?.trim() ?? '';
     final nama = info['Nama']?.trim() ?? '';
     final bagian = info['Bagian']?.trim() ?? '';
 
-    if (pin.isEmpty && nama.isEmpty && bagian.isEmpty) {
+    if (nama.isEmpty || (pin.isEmpty && nik.isEmpty)) {
       return '';
     }
 
     final parts = <String>[];
-    if (pin.isNotEmpty) parts.add('PIN: $pin');
-    if (nama.isNotEmpty) parts.add('Nama: $nama');
+    if (nik.isNotEmpty) {
+      parts.add('NIK: $nik');
+    } else {
+      parts.add('PIN: $pin');
+    }
+    parts.add('Nama: $nama');
     if (bagian.isNotEmpty) parts.add('Bagian: $bagian');
     return parts.join(' | ');
   }
 
-  String _buildScanId(Map<String, String> info, String fullBarcode) {
-    final normalized = _normalizeBarcodeForLookup(fullBarcode).trim();
+  String _employeeLabel(Map<String, String> info) {
+    final pin = info['PIN']?.trim() ?? '';
+    final nik = info['NIK']?.trim() ?? '';
+    final nama = info['Nama']?.trim() ?? '';
+
+    if (nama.isNotEmpty && pin.isNotEmpty) return '$nama (PIN: $pin)';
+    if (nama.isNotEmpty && nik.isNotEmpty) return '$nama (NIK: $nik)';
+    if (pin.isNotEmpty) return 'PIN: $pin';
+    if (nik.isNotEmpty) return 'NIK: $nik';
+    return 'QR tidak dikenal';
+  }
+
+  String _buildScanId(Map<String, String> info) {
+    final normalized = _normalizeBarcodeInfoForLookup(info).trim();
     if (normalized.isNotEmpty) return normalized;
 
     return '';
@@ -428,11 +590,13 @@ class _ScannerPageState extends State<ScannerPage>
     final raw = fullBarcode.trim();
     if (raw.isEmpty) return;
 
+    final isPengawas = widget.isPengawas;
     final info = _extractBarcodeInfo(raw);
-    final scanId = _buildScanId(info, raw);
-    final pin = info['PIN'] ?? '';
-    final nama = info['Nama'] ?? '';
-    final employeeLabel = nama.isEmpty ? 'PIN: $pin' : '$nama (PIN: $pin)';
+    final parsedScanId = _buildScanId(info);
+    final scanId = parsedScanId.isNotEmpty || isPengawas ? parsedScanId : raw;
+    final employeeLabel = parsedScanId.isNotEmpty
+        ? _employeeLabel(info)
+        : 'QR ID Card';
     final now = DateTime.now();
 
     if (_lastScannedId == scanId &&
@@ -443,7 +607,7 @@ class _ScannerPageState extends State<ScannerPage>
     _lastScannedId = scanId;
     _lastScannedAt = now;
 
-    if (pin.isEmpty) {
+    if (scanId.isEmpty) {
       setState(() {
         _lastResult = 'QR tidak dikenal';
         _lastStatus = 'error';
@@ -459,8 +623,6 @@ class _ScannerPageState extends State<ScannerPage>
       _isProcessing = true;
       _lastScanSource = source;
     });
-
-    final isPengawas = widget.isPengawas;
 
     try {
       Map<String, dynamic> result;
@@ -484,6 +646,7 @@ class _ScannerPageState extends State<ScannerPage>
         _lastColor = isDuplicate ? AppColors.warning : AppColors.success;
       });
       unawaited(_playSecurityFeedback(status));
+      unawaited(_loadScanLogs(showLoading: false));
     } catch (e) {
       final errorStr = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
       final isConnectionError =
@@ -512,7 +675,7 @@ class _ScannerPageState extends State<ScannerPage>
         unawaited(_playSecurityFeedback('offline'));
       } else if (isRejected) {
         setState(() {
-          _lastResult = '$employeeLabel\nDitolak, belum di-ACC Pengawas';
+          _lastResult = '$employeeLabel\n$errorStr';
           _lastStatus = 'rejected';
           _lastColor = AppColors.error;
         });
@@ -551,8 +714,23 @@ class _ScannerPageState extends State<ScannerPage>
       ),
       backgroundColor: isPengawas ? Colors.black : AppColors.background,
       body: isPengawas
-          ? _buildScannerBox(isLocked)
+          ? _buildPulangScannerWithList(isLocked)
           : _buildSecuritySelfService(isLocked),
+    );
+  }
+
+  Widget _buildPulangScannerWithList(bool isLocked) {
+    return SafeArea(
+      child: Column(
+        children: [
+          Expanded(child: _buildScannerBox(isLocked)),
+          Container(
+            color: AppColors.background,
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+            child: _buildScanLogPanel(compact: true),
+          ),
+        ],
+      ),
     );
   }
 
@@ -618,6 +796,8 @@ class _ScannerPageState extends State<ScannerPage>
                           color: color,
                         ),
                       ],
+                      const SizedBox(height: 18),
+                      _buildScanLogPanel(compact: !isWide),
                     ],
                   ),
                 ),
@@ -1061,6 +1241,198 @@ class _ScannerPageState extends State<ScannerPage>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildScanLogPanel({required bool compact}) {
+    final visibleLogs = _scanLogs.take(compact ? 3 : 6).toList();
+    final title = widget.isPengawas
+        ? 'Scan Pulang Hari Ini'
+        : 'Gate Security Hari Ini';
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(compact ? 12 : 16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(
+                widget.isPengawas ? Icons.assignment_turned_in : Icons.list_alt,
+                size: 20,
+                color: widget.isPengawas
+                    ? AppColors.pengawas
+                    : AppColors.security,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Refresh',
+                onPressed: _isLoadingScanLogs
+                    ? null
+                    : () => _loadScanLogs(showLoading: true),
+                icon: const Icon(Icons.refresh, size: 20),
+                visualDensity: VisualDensity.compact,
+                color: AppColors.textSecondary,
+              ),
+            ],
+          ),
+          if (_isLoadingScanLogs) ...[
+            const SizedBox(height: 8),
+            const LinearProgressIndicator(minHeight: 2),
+          ] else if (_scanLogsError != null) ...[
+            const SizedBox(height: 8),
+            _buildScanLogEmptyState(
+              icon: Icons.cloud_off,
+              text: 'Gagal memuat daftar scan',
+              detail: _scanLogsError,
+            ),
+          ] else if (visibleLogs.isEmpty) ...[
+            const SizedBox(height: 8),
+            _buildScanLogEmptyState(
+              icon: Icons.inbox_outlined,
+              text: 'Belum ada scan pulang hari ini',
+            ),
+          ] else ...[
+            const SizedBox(height: 10),
+            ...visibleLogs.map(
+              (log) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _buildScanLogTile(log, compact: compact),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScanLogEmptyState({
+    required IconData icon,
+    required String text,
+    String? detail,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: AppColors.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              detail == null ? text : '$text\n$detail',
+              maxLines: detail == null ? 1 : 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 1.3,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScanLogTile(Map<String, dynamic> log, {required bool compact}) {
+    final color = _scanLogStatusColor(log);
+    final name = _employeeNameFromLog(log);
+    final department = _employeeDepartmentFromLog(log);
+    final time = _scanLogTime(log);
+    final status = _scanLogStatusLabel(log);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 10 : 12,
+        vertical: compact ? 9 : 11,
+      ),
+      decoration: BoxDecoration(
+        color: color.withAlpha(12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withAlpha(32)),
+      ),
+      child: Row(
+        children: [
+          Icon(_scanLogStatusIcon(log), size: 20, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    if (department.isNotEmpty) department,
+                    if (time != '-') time,
+                  ].join(' - '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          _buildScanLogChip(status, color),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScanLogChip(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          color: color,
+        ),
       ),
     );
   }

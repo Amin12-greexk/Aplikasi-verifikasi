@@ -141,16 +141,24 @@ class ToiletExpiryMonitorService {
 
   static String _extractEmployeeLabel(String barcode) {
     final pin = _extractValue(barcode, 'PIN');
+    final nik = _extractValue(barcode, 'NIK');
     final nama = _extractValue(barcode, 'Nama');
     final bagian = _extractValue(barcode, 'Bagian');
 
     if (nama.isNotEmpty && pin.isNotEmpty && bagian.isNotEmpty) {
       return '$nama (PIN: $pin) - $bagian';
     }
+    if (nama.isNotEmpty && nik.isNotEmpty && bagian.isNotEmpty) {
+      return '$nama (NIK: $nik) - $bagian';
+    }
     if (nama.isNotEmpty && pin.isNotEmpty) {
       return '$nama (PIN: $pin)';
     }
+    if (nama.isNotEmpty && nik.isNotEmpty) {
+      return '$nama (NIK: $nik)';
+    }
     if (pin.isNotEmpty) return 'PIN: $pin';
+    if (nik.isNotEmpty) return 'NIK: $nik';
     return barcode.isEmpty ? 'Mitra' : barcode;
   }
 

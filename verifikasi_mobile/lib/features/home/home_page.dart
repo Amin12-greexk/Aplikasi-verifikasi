@@ -282,10 +282,13 @@ class _HomePageState extends State<HomePage> {
     }
 
     final pin = valueFor('PIN');
+    final nik = valueFor('NIK');
     final nama = valueFor('Nama');
     if (nama.isNotEmpty && pin.isNotEmpty) return '$nama (PIN: $pin)';
+    if (nama.isNotEmpty && nik.isNotEmpty) return '$nama (NIK: $nik)';
     if (nama.isNotEmpty) return nama;
     if (pin.isNotEmpty) return 'PIN: $pin';
+    if (nik.isNotEmpty) return 'NIK: $nik';
     return raw;
   }
 

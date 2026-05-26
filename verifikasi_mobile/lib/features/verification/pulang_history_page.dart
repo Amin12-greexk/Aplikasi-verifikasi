@@ -86,9 +86,15 @@ class _PulangHistoryPageState extends State<PulangHistoryPage> {
     try {
       final nama = _extractValue(fullBarcode, 'Nama');
       final pin = _extractValue(fullBarcode, 'PIN');
+      final nik = _extractValue(fullBarcode, 'NIK');
       final bagian = _extractValue(fullBarcode, 'Bagian');
       if (nama.isNotEmpty && pin.isNotEmpty) {
         String result = '$nama (PIN: $pin)';
+        if (bagian.isNotEmpty) result += ' - $bagian';
+        return result;
+      }
+      if (nama.isNotEmpty && nik.isNotEmpty) {
+        String result = '$nama (NIK: $nik)';
         if (bagian.isNotEmpty) result += ' - $bagian';
         return result;
       }
