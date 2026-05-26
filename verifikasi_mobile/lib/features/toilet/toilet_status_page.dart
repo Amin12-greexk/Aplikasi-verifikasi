@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/services/auth_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/wib_time.dart';
 import 'toilet_permit_service.dart';
@@ -18,6 +19,7 @@ class _ToiletStatusPageState extends State<ToiletStatusPage> {
   bool _isLoading = true;
   bool _isRefreshing = false;
   String? _error;
+  final Set<String> _closingPermitIds = <String>{};
   Timer? _ticker;
   Timer? _refreshTimer;
   DateTime _now = DateTime.now().toUtc();
@@ -142,6 +144,75 @@ class _ToiletStatusPageState extends State<ToiletStatusPage> {
     return proofBy == null || proofBy.isEmpty
         ? 'Timer toilet sedang berjalan. Sisa waktu ${ToiletPermitService.formatRemainingDetailedLabel(remaining)}.'
         : 'Timer toilet sedang berjalan sejak discan oleh $proofBy. Sisa waktu ${ToiletPermitService.formatRemainingDetailedLabel(remaining)}.';
+  }
+
+  bool _canSecurityClosePermit(Map<String, dynamic> permit) {
+    if (!AuthService.isSecurity()) return false;
+    if (!ToiletPermitService.isProofScanned(permit)) return false;
+
+    final proofAt = ToiletPermitService.parseDateTime(
+      permit['proof_scanned_at']?.toString(),
+    );
+    if (proofAt == null) return false;
+
+    final elapsed = _now.difference(proofAt.toUtc());
+    return elapsed >= const Duration(minutes: 5) ||
+        _remainingSeconds(permit) == 0;
+  }
+
+  Future<void> _closePermitAsSecurity(Map<String, dynamic> permit) async {
+    final idKaryawan = permit['id_karyawan']?.toString() ?? '';
+    if (idKaryawan.trim().isEmpty || _closingPermitIds.contains(idKaryawan)) {
+      return;
+    }
+
+    final info = _extractEmployeeInfo(idKaryawan);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Tutup izin toilet?'),
+        content: Text(
+          'Izin toilet $info akan dihapus dari daftar aktif dan dicatat sebagai sudah kembali.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.delete_outline, size: 18),
+            label: const Text('Tutup Izin'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _closingPermitIds.add(idKaryawan));
+    try {
+      await ToiletPermitService.closePermitAsSecurity(idKaryawan);
+      if (!mounted) return;
+      setState(() {
+        _permits.removeWhere(
+          (item) => item['id_karyawan']?.toString() == idKaryawan,
+        );
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Izin toilet berhasil ditutup')),
+      );
+      unawaited(_loadPermits(showLoading: false));
+    } catch (e) {
+      if (!mounted) return;
+      final message = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      if (mounted) {
+        setState(() => _closingPermitIds.remove(idKaryawan));
+      }
+    }
   }
 
   @override
@@ -276,6 +347,10 @@ class _ToiletStatusPageState extends State<ToiletStatusPage> {
                 final approvedBy = permit['approved_by']?.toString().trim();
                 final proofBy = permit['proof_scanned_by']?.toString().trim();
                 final duration = permit['duration_minutes']?.toString() ?? '-';
+                final idKaryawan = permit['id_karyawan']?.toString() ?? '';
+                final isSecurity = AuthService.isSecurity();
+                final isClosing = _closingPermitIds.contains(idKaryawan);
+                final canClosePermit = _canSecurityClosePermit(permit);
 
                 return Container(
                   margin: const EdgeInsets.only(bottom: 10),
@@ -374,6 +449,39 @@ class _ToiletStatusPageState extends State<ToiletStatusPage> {
                             ? '${proofBy == null || proofBy.isEmpty ? 'Security' : proofBy} pada $proofAt'
                             : 'Belum ada scan security',
                       ),
+                      if (isSecurity && proofScanned) ...[
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: canClosePermit && !isClosing
+                                ? () => _closePermitAsSecurity(permit)
+                                : null,
+                            icon: isClosing
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.delete_outline, size: 18),
+                            label: Text(
+                              canClosePermit
+                                  ? 'Tutup / hapus izin aktif'
+                                  : 'Bisa ditutup setelah 5 menit dari scan security',
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.error,
+                              side: BorderSide(
+                                color: canClosePermit
+                                    ? AppColors.error
+                                    : AppColors.cardBorder,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 );

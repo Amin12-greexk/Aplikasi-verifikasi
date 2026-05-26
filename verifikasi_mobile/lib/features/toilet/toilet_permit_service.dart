@@ -303,6 +303,23 @@ class ToiletPermitService {
     }
   }
 
+  static Future<void> closePermitAsSecurity(String idKaryawan) async {
+    final response = await BaseApiClient.post(
+      '/toilet-permit/security-close',
+      body: {'id_karyawan': idKaryawan, 'username': AuthService.username},
+    );
+    if (response.statusCode >= 400) {
+      final data = BaseApiClient.tryJson(response.body);
+      throw Exception(
+        _resolveErrorMessage(
+          data,
+          'Gagal menutup izin toilet',
+          statusCode: response.statusCode,
+        ),
+      );
+    }
+  }
+
   static Future<List<Map<String, dynamic>>> fetchPermitHistory(
     String date,
   ) async {

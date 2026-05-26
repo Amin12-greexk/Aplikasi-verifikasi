@@ -701,6 +701,74 @@ Future<Router> buildRouter(Database db) async {
     }
   });
 
+  r.post('/toilet-permit/security-close', (Request req) async {
+    try {
+      final body = jsonDecode(await req.readAsString());
+      final rawId = body['id_karyawan']?.toString().trim() ?? '';
+      var id = _extractBarcodeInfo(rawId);
+      if (id.isEmpty) id = rawId;
+      final username = body['username']?.toString().trim();
+      if (id.isEmpty) return bad('Data izin toilet kosong');
+      if (username == null || username.isEmpty) return bad('Username wajib');
+
+      final userRows = db.select('SELECT role FROM users WHERE username = ?', [
+        username,
+      ]);
+      if (userRows.isEmpty) return bad('Security tidak ditemukan', code: 404);
+      final role = userRows.first['role']?.toString().toLowerCase();
+      if (role != 'security') {
+        return bad('Akses hanya untuk security', code: 403);
+      }
+
+      final rows = db.select(
+        'SELECT * FROM toilet_permit WHERE id_karyawan=?',
+        [id],
+      );
+      if (rows.isEmpty) {
+        return bad('Izin toilet aktif tidak ditemukan', code: 404);
+      }
+
+      final permit = Map<String, Object?>.from(rows.first);
+      final proofStatus = permit['proof_status']?.toString().toUpperCase();
+      final proofScannedAt = _tryParseDateTime(permit['proof_scanned_at']);
+      if (proofStatus != 'SCANNED' || proofScannedAt == null) {
+        return bad('Izin belum masuk status security');
+      }
+
+      final elapsed = _nowUtc().difference(proofScannedAt);
+      if (elapsed < const Duration(minutes: 5)) {
+        return bad(
+          'Izin baru bisa ditutup setelah 5 menit dari scan security',
+          code: 403,
+        );
+      }
+
+      await _retryDbOperation(() async {
+        db.execute('BEGIN IMMEDIATE TRANSACTION');
+        try {
+          db.execute(
+            'UPDATE toilet_permit_history SET permit_state="RETURNED" WHERE id_karyawan=? AND approved_at=?',
+            [id, permit['approved_at']],
+          );
+          db.execute('DELETE FROM toilet_permit WHERE id_karyawan=?', [id]);
+          db.execute('COMMIT');
+        } catch (e) {
+          db.execute('ROLLBACK');
+          rethrow;
+        }
+      });
+
+      return ok({
+        'message': 'Izin toilet aktif berhasil ditutup security',
+        'id_karyawan': id,
+        'closed_by': username,
+        'closed_at': _formatWibIso(_nowUtc()),
+      });
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
+
   r.get('/toilet-permit/status/<id>', (Request req, String rawId) {
     try {
       final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());
