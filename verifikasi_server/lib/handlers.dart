@@ -114,7 +114,7 @@ String _extractBarcodeInfo(String fullBarcode) {
       final nik = info['NIK']?.trim() ?? '';
       final nama = info['Nama']?.trim() ?? '';
       final bagian = info['Bagian']?.trim() ?? '';
-      
+
       if (pin.isNotEmpty || nik.isNotEmpty) {
         final parts = <String>[];
         if (nik.isNotEmpty) {
@@ -131,10 +131,26 @@ String _extractBarcodeInfo(String fullBarcode) {
     // 2. ULTRA-ROBUST REGEX PARSING
     // Menangani teks yang "smashed" (menyambung tanpa spasi/newline)
     final patterns = {
-      'PIN': RegExp(r'PIN\s*:\s*(.*?)(?=NAMA|NIK|BAGIAN|ALAMAT|ALAMAT|$)', caseSensitive: false, dotAll: true),
-      'Nama': RegExp(r'NAMA\s*:\s*(.*?)(?=PIN|NIK|BAGIAN|ALAMAT|ALAMAT|$)', caseSensitive: false, dotAll: true),
-      'NIK': RegExp(r'NIK\s*:\s*(.*?)(?=PIN|NAMA|BAGIAN|ALAMAT|ALAMAT|$)', caseSensitive: false, dotAll: true),
-      'Bagian': RegExp(r'BAGIAN\s*:\s*(.*?)(?=PIN|NAMA|NIK|ALAMAT|ALAMAT|$)', caseSensitive: false, dotAll: true),
+      'PIN': RegExp(
+        r'PIN\s*:\s*(.*?)(?=NAMA|NIK|BAGIAN|ALAMAT|ALAMAT|$)',
+        caseSensitive: false,
+        dotAll: true,
+      ),
+      'Nama': RegExp(
+        r'NAMA\s*:\s*(.*?)(?=PIN|NIK|BAGIAN|ALAMAT|ALAMAT|$)',
+        caseSensitive: false,
+        dotAll: true,
+      ),
+      'NIK': RegExp(
+        r'NIK\s*:\s*(.*?)(?=PIN|NAMA|BAGIAN|ALAMAT|ALAMAT|$)',
+        caseSensitive: false,
+        dotAll: true,
+      ),
+      'Bagian': RegExp(
+        r'BAGIAN\s*:\s*(.*?)(?=PIN|NAMA|NIK|ALAMAT|ALAMAT|$)',
+        caseSensitive: false,
+        dotAll: true,
+      ),
     };
 
     final info = <String, String>{};
@@ -173,13 +189,75 @@ String _extractBarcodeInfo(String fullBarcode) {
       }
     }
   } catch (e) {
-    debugPrint('[Scanner] Error parsing barcode: $e');
+    print('[Scanner] Error parsing barcode: $e');
   }
 
   // 3. FALLBACK: "Accept all kind of string"
   // Kembalikan data mentah yang sudah dibersihkan dari karakter kontrol
   // Gunakan spasi tunggal untuk menggantikan newline/tab agar konsisten antar scanner
-  return raw.replaceAll(RegExp(r'[\r\n\t]+'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+  return raw
+      .replaceAll(RegExp(r'[\r\n\t]+'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
+String _extractIdentityLookupKey(String value) {
+  final raw = value.trim();
+  if (raw.isEmpty) return '';
+
+  final nikMatch = RegExp(
+    r'NIK\s*:\s*([0-9]{8,30})',
+    caseSensitive: false,
+  ).firstMatch(raw);
+  if (nikMatch != null) {
+    return 'NIK: ${nikMatch.group(1)}';
+  }
+
+  final pinMatch = RegExp(
+    r'PIN\s*:\s*([0-9]{3,20})',
+    caseSensitive: false,
+  ).firstMatch(raw);
+  if (pinMatch != null) {
+    return 'PIN: ${pinMatch.group(1)}';
+  }
+
+  final parsed = _extractBarcodeInfo(raw);
+  final firstPart = parsed.split('|').first.trim();
+  final separatorIndex = firstPart.indexOf(':');
+  if (separatorIndex <= 0) return '';
+
+  final key = firstPart.substring(0, separatorIndex).trim().toUpperCase();
+  if (key != 'NIK' && key != 'PIN') return '';
+
+  final idValue = firstPart.substring(separatorIndex + 1).trim();
+  if (idValue.isEmpty) return '';
+  return '$key: $idValue';
+}
+
+Map<String, Object?>? _findToiletPermitByLookupId(
+  Database db,
+  String lookupId,
+) {
+  final cleanedLookup = lookupId.trim();
+  if (cleanedLookup.isEmpty) return null;
+
+  final exactRows = db.select(
+    'SELECT * FROM toilet_permit WHERE id_karyawan=? ORDER BY approved_at DESC LIMIT 1',
+    [cleanedLookup],
+  );
+  if (exactRows.isNotEmpty) {
+    return Map<String, Object?>.from(exactRows.first);
+  }
+
+  final identityKey = _extractIdentityLookupKey(cleanedLookup);
+  if (identityKey.isEmpty) return null;
+
+  final fallbackRows = db.select(
+    'SELECT * FROM toilet_permit WHERE id_karyawan=? OR id_karyawan LIKE ? ORDER BY approved_at DESC LIMIT 1',
+    [identityKey, '$identityKey%'],
+  );
+  if (fallbackRows.isEmpty) return null;
+  return Map<String, Object?>.from(fallbackRows.first);
 }
 
 Future<T> _retryDbOperation<T>(
@@ -672,14 +750,9 @@ Future<Router> buildRouter(Database db) async {
       final username = body['username']?.toString().trim();
       if (id.isEmpty) return bad('Data QR kosong');
       if (username == null || username.isEmpty) return bad('Username wajib');
-
-      final rows = db.select(
-        'SELECT * FROM toilet_permit WHERE id_karyawan=?',
-        [id],
-      );
-      if (rows.isEmpty) return bad('Belum ada izin toilet dari pengawas');
-
-      final permit = Map<String, Object?>.from(rows.first);
+      final permit = _findToiletPermitByLookupId(db, id);
+      if (permit == null) return bad('Belum ada izin toilet dari pengawas');
+      final storedId = permit['id_karyawan']?.toString().trim() ?? id;
       if (permit['proof_scanned_at'] != null) {
         return ok(_mapToiletPermitRow(permit));
       }
@@ -697,19 +770,14 @@ Future<Router> buildRouter(Database db) async {
       await _retryDbOperation(() async {
         db.execute(
           'UPDATE toilet_permit SET proof_scanned_by=?, proof_scanned_at=?, expires_at=?, proof_status="SCANNED" WHERE id_karyawan=?',
-          [username, nowIso, expiresAtIso, id],
+          [username, nowIso, expiresAtIso, storedId],
         );
         db.execute(
           'UPDATE toilet_permit_history SET proof_scanned_by=?, proof_scanned_at=?, expires_at=?, proof_status="SCANNED", permit_state="ACTIVE" WHERE id_karyawan=? AND approved_at=?',
-          [username, nowIso, expiresAtIso, id, permit['approved_at']],
+          [username, nowIso, expiresAtIso, storedId, permit['approved_at']],
         );
       });
-
-      final updated = Map<String, Object?>.from(
-        db.select('SELECT * FROM toilet_permit WHERE id_karyawan=?', [
-          id,
-        ]).first,
-      );
+      final updated = _findToiletPermitByLookupId(db, storedId) ?? permit;
       return ok(_mapToiletPermitRow(updated, now: now));
     } catch (e) {
       return bad('Error: $e', code: 500);
@@ -726,24 +794,21 @@ Future<Router> buildRouter(Database db) async {
       final username = body['username']?.toString().trim();
       if (id.isEmpty) return bad('Data QR kosong');
       if (username == null || username.isEmpty) return bad('Username wajib');
-
-      final rows = db.select(
-        'SELECT * FROM toilet_permit WHERE id_karyawan=?',
-        [id],
-      );
-      if (rows.isEmpty) {
+      final permit = _findToiletPermitByLookupId(db, id);
+      if (permit == null) {
         return bad('Izin toilet aktif tidak ditemukan', code: 404);
       }
-
-      final permit = Map<String, Object?>.from(rows.first);
+      final storedId = permit['id_karyawan']?.toString().trim() ?? id;
       await _retryDbOperation(() async {
         db.execute('BEGIN IMMEDIATE TRANSACTION');
         try {
           db.execute(
             'UPDATE toilet_permit_history SET permit_state="RETURNED" WHERE id_karyawan=? AND approved_at=?',
-            [id, permit['approved_at']],
+            [storedId, permit['approved_at']],
           );
-          db.execute('DELETE FROM toilet_permit WHERE id_karyawan=?', [id]);
+          db.execute('DELETE FROM toilet_permit WHERE id_karyawan=?', [
+            storedId,
+          ]);
           db.execute('COMMIT');
         } catch (e) {
           db.execute('ROLLBACK');
@@ -753,7 +818,7 @@ Future<Router> buildRouter(Database db) async {
 
       return ok({
         'message': 'Mitra ditandai sudah kembali',
-        'id_karyawan': id,
+        'id_karyawan': storedId,
         'returned_by': username,
         'returned_at': _formatWibIso(_nowUtc()),
       });
@@ -780,16 +845,11 @@ Future<Router> buildRouter(Database db) async {
       if (role != 'security') {
         return bad('Akses hanya untuk security', code: 403);
       }
-
-      final rows = db.select(
-        'SELECT * FROM toilet_permit WHERE id_karyawan=?',
-        [id],
-      );
-      if (rows.isEmpty) {
+      final permit = _findToiletPermitByLookupId(db, id);
+      if (permit == null) {
         return bad('Izin toilet aktif tidak ditemukan', code: 404);
       }
-
-      final permit = Map<String, Object?>.from(rows.first);
+      final storedId = permit['id_karyawan']?.toString().trim() ?? id;
       final proofStatus = permit['proof_status']?.toString().toUpperCase();
       final proofScannedAt = _tryParseDateTime(permit['proof_scanned_at']);
       if (proofStatus != 'SCANNED' || proofScannedAt == null) {
@@ -809,9 +869,11 @@ Future<Router> buildRouter(Database db) async {
         try {
           db.execute(
             'UPDATE toilet_permit_history SET permit_state="RETURNED" WHERE id_karyawan=? AND approved_at=?',
-            [id, permit['approved_at']],
+            [storedId, permit['approved_at']],
           );
-          db.execute('DELETE FROM toilet_permit WHERE id_karyawan=?', [id]);
+          db.execute('DELETE FROM toilet_permit WHERE id_karyawan=?', [
+            storedId,
+          ]);
           db.execute('COMMIT');
         } catch (e) {
           db.execute('ROLLBACK');
@@ -821,7 +883,7 @@ Future<Router> buildRouter(Database db) async {
 
       return ok({
         'message': 'Izin toilet aktif berhasil ditutup security',
-        'id_karyawan': id,
+        'id_karyawan': storedId,
         'closed_by': username,
         'closed_at': _formatWibIso(_nowUtc()),
       });
@@ -834,14 +896,11 @@ Future<Router> buildRouter(Database db) async {
     try {
       final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());
       if (id.isEmpty) return bad('QR tidak dikenal');
-      final rows = db.select(
-        'SELECT * FROM toilet_permit WHERE id_karyawan=?',
-        [id],
-      );
-      if (rows.isEmpty) {
+      final permit = _findToiletPermitByLookupId(db, id);
+      if (permit == null) {
         return bad('Belum ada izin toilet dari pengawas', code: 404);
       }
-      return ok(_mapToiletPermitRow(Map<String, Object?>.from(rows.first)));
+      return ok(_mapToiletPermitRow(permit));
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
@@ -1135,23 +1194,34 @@ Future<Router> buildRouter(Database db) async {
       final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());
       if (id.isEmpty) return bad('QR tidak dikenal');
       final body = jsonDecode(await req.readAsString());
-      
-      final rows = db.select('SELECT * FROM toilet_permit WHERE id_karyawan=?', [id]);
+
+      final rows = db.select(
+        'SELECT * FROM toilet_permit WHERE id_karyawan=?',
+        [id],
+      );
       if (rows.isEmpty) return bad('Izin tidak ditemukan', code: 404);
 
-      final proofStatus = body['proof_status']?.toString().toUpperCase() ?? 'PENDING';
+      final proofStatus =
+          body['proof_status']?.toString().toUpperCase() ?? 'PENDING';
       final duration = _normalizeDurationMinutes(body['duration_minutes']);
-      
+
       db.execute(
         'UPDATE toilet_permit SET proof_status=?, duration_minutes=? WHERE id_karyawan=?',
         [proofStatus, duration, id],
       );
 
-      final updatedRows = db.select('SELECT * FROM toilet_permit WHERE id_karyawan=?', [id]);
+      final updatedRows = db.select(
+        'SELECT * FROM toilet_permit WHERE id_karyawan=?',
+        [id],
+      );
       final permit = Map<String, Object?>.from(updatedRows.first);
-      
-      _saveToiletPermitHistory(db, permit, permitState: proofStatus == 'SCANNED' ? 'ACTIVE' : 'PENDING');
-      
+
+      _saveToiletPermitHistory(
+        db,
+        permit,
+        permitState: proofStatus == 'SCANNED' ? 'ACTIVE' : 'PENDING',
+      );
+
       return ok(_mapToiletPermitRow(permit));
     } catch (e) {
       return bad('Error: $e', code: 500);
@@ -1162,9 +1232,10 @@ Future<Router> buildRouter(Database db) async {
     try {
       final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());
       if (id.isEmpty) return bad('QR tidak dikenal');
-      final rows = db.select('SELECT * FROM toilet_permit WHERE id_karyawan=?', [
-        id,
-      ]);
+      final rows = db.select(
+        'SELECT * FROM toilet_permit WHERE id_karyawan=?',
+        [id],
+      );
       if (rows.isEmpty) return bad('Izin tidak ditemukan', code: 404);
       db.execute('DELETE FROM toilet_permit WHERE id_karyawan=?', [id]);
       return ok({'message': 'Izin toilet berhasil dihapus', 'id_karyawan': id});
