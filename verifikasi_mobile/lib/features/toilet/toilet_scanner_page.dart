@@ -39,11 +39,10 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
   static const List<int> _durationOptions = [5, 10, 20];
 
   final MobileScannerController _controller = MobileScannerController(
-    detectionSpeed: DetectionSpeed.normal,
-    detectionTimeoutMs: 250, // Lebih rileks agar sensor punya waktu fokus
+    detectionSpeed: DetectionSpeed.unrestricted,
+    detectionTimeoutMs: 150,
     facing: CameraFacing.back,
     formats: [BarcodeFormat.qrCode],
-    // cameraResolution dihilangkan agar sistem memilih yang paling optimal
     useNewCameraSelector: true,
     autoStart: false,
   );
@@ -73,6 +72,7 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
   bool _isCameraRunning = false;
   bool _isSyncingCamera = false;
   bool _useCameraFallback = false;
+  CameraFacing _securityCameraFacing = CameraFacing.front;
 
   @override
   void initState() {
@@ -130,7 +130,16 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
       _appLifecycleState == AppLifecycleState.resumed;
 
   CameraFacing get _desiredCameraFacing =>
-      widget.isPengawas ? CameraFacing.back : CameraFacing.front;
+      widget.isPengawas ? CameraFacing.back : _securityCameraFacing;
+
+  String get _securityCameraLabel => _securityCameraFacing == CameraFacing.front
+      ? 'Kamera depan'
+      : 'Kamera belakang';
+
+  IconData get _securityCameraIcon =>
+      _securityCameraFacing == CameraFacing.front
+      ? Icons.camera_front
+      : Icons.camera_rear;
 
   Future<void> _syncCameraState() async {
     if (!mounted || _isSyncingCamera) return;
@@ -163,6 +172,26 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     } catch (_) {}
     _isCameraRunning = false;
     await _syncCameraState();
+  }
+
+  Future<void> _setSecurityCameraFacing(CameraFacing facing) async {
+    if (widget.isPengawas || _securityCameraFacing == facing) return;
+    setState(() => _securityCameraFacing = facing);
+    if (!_useCameraFallback) return;
+
+    try {
+      await _controller.stop();
+    } catch (_) {}
+    _isCameraRunning = false;
+    await _syncCameraState();
+  }
+
+  Future<void> _toggleSecurityCameraFacing() async {
+    await _setSecurityCameraFacing(
+      _securityCameraFacing == CameraFacing.front
+          ? CameraFacing.back
+          : CameraFacing.front,
+    );
   }
 
   /// Otomatis reset scanner 1 detik setelah processing selesai.
@@ -372,14 +401,7 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
       }
     } catch (_) {}
 
-    final pin = info['PIN']?.trim() ?? '';
-    final nik = info['NIK']?.trim() ?? '';
-    final nama = info['Nama']?.trim() ?? '';
-    if (nama.isEmpty || (pin.isEmpty && nik.isEmpty)) {
-      return <String, String>{};
-    }
-
-    return info;
+    return info; // BYPASS
   }
 
   String _normalizeBarcodeInfoForLookup(Map<String, String> info) {
@@ -388,7 +410,7 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     final nama = info['Nama']?.trim() ?? '';
     final bagian = info['Bagian']?.trim() ?? '';
 
-    if (nama.isEmpty || (pin.isEmpty && nik.isEmpty)) {
+    if (pin.isEmpty && nik.isEmpty) {
       return '';
     }
 
@@ -398,7 +420,7 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     } else {
       parts.add('PIN: $pin');
     }
-    parts.add('Nama: $nama');
+    if (nama.isNotEmpty) parts.add('Nama: $nama');
     if (bagian.isNotEmpty) parts.add('Bagian: $bagian');
     return parts.join(' | ');
   }
@@ -412,14 +434,11 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     if (nama.isNotEmpty && nik.isNotEmpty) return '$nama (NIK: $nik)';
     if (pin.isNotEmpty) return 'PIN: $pin';
     if (nik.isNotEmpty) return 'NIK: $nik';
-    return 'QR tidak dikenal';
+    return 'ID Card';
   }
 
   String _buildScanId(Map<String, String> info) {
-    final normalized = _normalizeBarcodeInfoForLookup(info).trim();
-    if (normalized.isNotEmpty) return normalized;
-
-    return '';
+    return _normalizeBarcodeInfoForLookup(info).trim();
   }
 
   Future<String?> _showBypassDialog({
@@ -541,7 +560,9 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     final isPengawas = widget.isPengawas;
     final info = _extractBarcodeInfo(raw);
     final parsedScanId = _buildScanId(info);
-    final scanId = parsedScanId.isNotEmpty || isPengawas ? parsedScanId : raw;
+    
+    // BYPASS: Gunakan parsedScanId jika ada, jika tidak ada gunakan raw data langsung.
+    final scanId = parsedScanId.isNotEmpty ? parsedScanId : raw;
     final employeeLabel = parsedScanId.isNotEmpty
         ? _employeeLabel(info)
         : 'QR ID Card';
@@ -557,7 +578,7 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
 
     if (scanId.isEmpty) {
       setState(() {
-        _lastResult = 'QR tidak dikenal';
+        _lastResult = 'Data QR Kosong';
         _lastStatus = 'error';
         _lastColor = AppColors.error;
         _lastScanSource = source;
@@ -713,6 +734,10 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
                           const SizedBox(width: 10),
                           Expanded(child: _buildHardwareFocusChip()),
                           const SizedBox(width: 8),
+                          if (_useCameraFallback) ...[
+                            _buildCameraFacingButton(),
+                            const SizedBox(width: 8),
+                          ],
                           _buildInputModeButton(),
                         ],
                       ),
@@ -769,14 +794,14 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: AppColors.info.withAlpha(45)),
             ),
-            child: const Row(
+            child: Row(
               children: [
-                Icon(Icons.camera_front, size: 18, color: AppColors.info),
-                SizedBox(width: 8),
+                Icon(_securityCameraIcon, size: 18, color: AppColors.info),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Kamera depan aktif',
-                    style: TextStyle(
+                    '$_securityCameraLabel aktif',
+                    style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                       color: AppColors.info,
@@ -836,6 +861,22 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
         backgroundColor: _useCameraFallback
             ? AppColors.success
             : AppColors.info,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  Widget _buildCameraFacingButton() {
+    return FilledButton.icon(
+      onPressed: _toggleSecurityCameraFacing,
+      icon: const Icon(Icons.cameraswitch, size: 18),
+      label: Text(
+        _securityCameraFacing == CameraFacing.front ? 'Depan' : 'Belakang',
+      ),
+      style: FilledButton.styleFrom(
+        backgroundColor: AppColors.warning,
         foregroundColor: Colors.white,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
@@ -962,7 +1003,7 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
                     _lastScanSource == 'scanner'
                         ? 'Input terakhir: scanner fisik'
                         : _lastScanSource == 'camera'
-                        ? 'Input terakhir: kamera depan'
+                        ? 'Input terakhir: ${_securityCameraLabel.toLowerCase()}'
                         : 'Menunggu scan ID Card',
                     style: const TextStyle(
                       fontSize: 12,
@@ -1008,7 +1049,7 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
                           error.errorCode ==
                               MobileScannerErrorCode.permissionDenied
                           ? 'Izin kamera ditolak. Aktifkan izin kamera di pengaturan aplikasi.'
-                          : 'Kamera depan gagal dijalankan. Tekan tombol refresh.';
+                          : '$_securityCameraLabel gagal dijalankan. Tekan tombol refresh.';
                       return Transform(
                         alignment: Alignment.center,
                         transform: Matrix4.rotationY(
@@ -1068,14 +1109,18 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(color: Colors.white.withAlpha(35)),
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.camera_front, size: 16, color: Colors.white),
-                        SizedBox(width: 6),
+                        Icon(
+                          _securityCameraIcon,
+                          size: 16,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 6),
                         Text(
-                          'Kamera depan',
-                          style: TextStyle(
+                          _securityCameraLabel,
+                          style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                             color: Colors.white,

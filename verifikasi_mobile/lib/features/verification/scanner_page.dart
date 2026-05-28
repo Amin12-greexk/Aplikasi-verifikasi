@@ -39,11 +39,10 @@ class _ScannerPageState extends State<ScannerPage>
   );
 
   final MobileScannerController _controller = MobileScannerController(
-    detectionSpeed: DetectionSpeed.normal,
-    detectionTimeoutMs: 250, // Lebih rileks agar sensor punya waktu fokus
+    detectionSpeed: DetectionSpeed.unrestricted, // Scanner merespon sangat cepat
+    detectionTimeoutMs: 150, // Respon cepat namun tetap stabil
     facing: CameraFacing.back,
     formats: [BarcodeFormat.qrCode],
-    // cameraResolution dihilangkan agar sistem memilih yang paling optimal
     useNewCameraSelector: true,
     autoStart: false,
   );
@@ -75,6 +74,7 @@ class _ScannerPageState extends State<ScannerPage>
   bool _isCameraRunning = false;
   bool _isSyncingCamera = false;
   bool _useCameraFallback = false;
+  CameraFacing _securityCameraFacing = CameraFacing.front;
 
   @override
   void initState() {
@@ -134,7 +134,16 @@ class _ScannerPageState extends State<ScannerPage>
       _appLifecycleState == AppLifecycleState.resumed;
 
   CameraFacing get _desiredCameraFacing =>
-      widget.isPengawas ? CameraFacing.back : CameraFacing.front;
+      widget.isPengawas ? CameraFacing.back : _securityCameraFacing;
+
+  String get _securityCameraLabel => _securityCameraFacing == CameraFacing.front
+      ? 'Kamera depan'
+      : 'Kamera belakang';
+
+  IconData get _securityCameraIcon =>
+      _securityCameraFacing == CameraFacing.front
+      ? Icons.camera_front
+      : Icons.camera_rear;
 
   Future<void> _syncCameraState() async {
     if (!mounted || _isSyncingCamera) return;
@@ -167,6 +176,26 @@ class _ScannerPageState extends State<ScannerPage>
     } catch (_) {}
     _isCameraRunning = false;
     await _syncCameraState();
+  }
+
+  Future<void> _setSecurityCameraFacing(CameraFacing facing) async {
+    if (widget.isPengawas || _securityCameraFacing == facing) return;
+    setState(() => _securityCameraFacing = facing);
+    if (!_useCameraFallback) return;
+
+    try {
+      await _controller.stop();
+    } catch (_) {}
+    _isCameraRunning = false;
+    await _syncCameraState();
+  }
+
+  Future<void> _toggleSecurityCameraFacing() async {
+    await _setSecurityCameraFacing(
+      _securityCameraFacing == CameraFacing.front
+          ? CameraFacing.back
+          : CameraFacing.front,
+    );
   }
 
   /// Otomatis reset scanner 1 detik setelah processing selesai.
@@ -443,7 +472,6 @@ class _ScannerPageState extends State<ScannerPage>
         final parts = raw.split(',').map(_cleanBarcodeValue).toList();
         if (parts.length >= 2) {
           // Cari PIN: biasanya field yang hanya berisi angka (numeric)
-          // Kita cek 2 index pertama karena posisi PIN bisa di index 0 atau 1
           int pinIndex = -1;
           if (RegExp(r'^[0-9]+$').hasMatch(parts[0])) {
             pinIndex = 0;
@@ -452,23 +480,14 @@ class _ScannerPageState extends State<ScannerPage>
           }
 
           if (pinIndex != -1) {
-            final pin = parts[pinIndex];
-            final nama = parts[pinIndex == 0 ? 1 : 0];
-            if (pin.isEmpty || nama.isEmpty) return <String, String>{};
-
-            info['PIN'] = pin;
-            // Nama adalah index yang bukan PIN (antara 0 atau 1)
-            info['Nama'] = nama;
+            info['PIN'] = parts[pinIndex];
+            info['Nama'] = parts[pinIndex == 0 ? 1 : 0];
             if (parts.length >= 3 && parts[2].isNotEmpty) {
               info['NIK'] = parts[2];
             }
-
-            // Cari Bagian: biasanya di field yang mengandung kata 'Group' atau index ke-4 (Sarirejo...)
-            // atau mengikuti header standar index ke-9. Kita coba cari yang paling masuk akal.
             if (parts.length >= 10) {
               info['Bagian'] = parts[9];
             } else if (parts.length >= 4) {
-              // Jika data lebih pendek, coba ambil field ke-4 (index 3)
               info['Bagian'] = parts[3];
             }
             return info;
@@ -493,14 +512,7 @@ class _ScannerPageState extends State<ScannerPage>
       debugPrint('[Scanner] Error parsing barcode: $e');
     }
 
-    final pin = info['PIN']?.trim() ?? '';
-    final nik = info['NIK']?.trim() ?? '';
-    final nama = info['Nama']?.trim() ?? '';
-    if (nama.isEmpty || (pin.isEmpty && nik.isEmpty)) {
-      return <String, String>{};
-    }
-
-    return info;
+    return info; // BYPASS: Kembalikan info apa pun yang berhasil di-parse
   }
 
   /// Normalize barcode to same format as server storage:
@@ -512,7 +524,8 @@ class _ScannerPageState extends State<ScannerPage>
     final nama = info['Nama']?.trim() ?? '';
     final bagian = info['Bagian']?.trim() ?? '';
 
-    if (nama.isEmpty || (pin.isEmpty && nik.isEmpty)) {
+    // BYPASS: Jika minimal ada identitas (PIN/NIK), coba buat normalized string
+    if (pin.isEmpty && nik.isEmpty) {
       return '';
     }
 
@@ -522,8 +535,11 @@ class _ScannerPageState extends State<ScannerPage>
     } else {
       parts.add('PIN: $pin');
     }
-    parts.add('Nama: $nama');
+    
+    // Nama opsional untuk lookup jika data mentah tidak memilikinya
+    if (nama.isNotEmpty) parts.add('Nama: $nama');
     if (bagian.isNotEmpty) parts.add('Bagian: $bagian');
+    
     return parts.join(' | ');
   }
 
@@ -536,14 +552,12 @@ class _ScannerPageState extends State<ScannerPage>
     if (nama.isNotEmpty && nik.isNotEmpty) return '$nama (NIK: $nik)';
     if (pin.isNotEmpty) return 'PIN: $pin';
     if (nik.isNotEmpty) return 'NIK: $nik';
-    return 'QR tidak dikenal';
+    return 'ID Card';
   }
 
   String _buildScanId(Map<String, String> info) {
     final normalized = _normalizeBarcodeInfoForLookup(info).trim();
-    if (normalized.isNotEmpty) return normalized;
-
-    return '';
+    return normalized;
   }
 
   Future<void> _onDetect(BarcodeCapture capture) async {
@@ -593,7 +607,10 @@ class _ScannerPageState extends State<ScannerPage>
     final isPengawas = widget.isPengawas;
     final info = _extractBarcodeInfo(raw);
     final parsedScanId = _buildScanId(info);
-    final scanId = parsedScanId.isNotEmpty || isPengawas ? parsedScanId : raw;
+    
+    // BYPASS: Gunakan parsedScanId jika ada, jika tidak ada gunakan raw data langsung.
+    // Ini berlaku untuk Pengawas maupun Security agar fleksibel.
+    final scanId = parsedScanId.isNotEmpty ? parsedScanId : raw;
     final employeeLabel = parsedScanId.isNotEmpty
         ? _employeeLabel(info)
         : 'QR ID Card';
@@ -609,7 +626,7 @@ class _ScannerPageState extends State<ScannerPage>
 
     if (scanId.isEmpty) {
       setState(() {
-        _lastResult = 'QR tidak dikenal';
+        _lastResult = 'Data QR Kosong';
         _lastStatus = 'error';
         _lastColor = AppColors.error;
         _lastScanSource = source;
@@ -763,6 +780,10 @@ class _ScannerPageState extends State<ScannerPage>
                           const SizedBox(width: 10),
                           Expanded(child: _buildHardwareFocusChip()),
                           const SizedBox(width: 8),
+                          if (_useCameraFallback) ...[
+                            _buildCameraFacingButton(),
+                            const SizedBox(width: 8),
+                          ],
                           _buildInputModeButton(),
                         ],
                       ),
@@ -821,14 +842,14 @@ class _ScannerPageState extends State<ScannerPage>
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: AppColors.info.withAlpha(45)),
             ),
-            child: const Row(
+            child: Row(
               children: [
-                Icon(Icons.camera_front, size: 18, color: AppColors.info),
-                SizedBox(width: 8),
+                Icon(_securityCameraIcon, size: 18, color: AppColors.info),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Kamera depan aktif',
-                    style: TextStyle(
+                    '$_securityCameraLabel aktif',
+                    style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                       color: AppColors.info,
@@ -888,6 +909,22 @@ class _ScannerPageState extends State<ScannerPage>
         backgroundColor: _useCameraFallback
             ? AppColors.success
             : AppColors.info,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  Widget _buildCameraFacingButton() {
+    return FilledButton.icon(
+      onPressed: _toggleSecurityCameraFacing,
+      icon: const Icon(Icons.cameraswitch, size: 18),
+      label: Text(
+        _securityCameraFacing == CameraFacing.front ? 'Depan' : 'Belakang',
+      ),
+      style: FilledButton.styleFrom(
+        backgroundColor: AppColors.warning,
         foregroundColor: Colors.white,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
@@ -1020,7 +1057,7 @@ class _ScannerPageState extends State<ScannerPage>
                     _lastScanSource == 'scanner'
                         ? 'Input terakhir: scanner fisik'
                         : _lastScanSource == 'camera'
-                        ? 'Input terakhir: kamera depan'
+                        ? 'Input terakhir: ${_securityCameraLabel.toLowerCase()}'
                         : 'Menunggu scan ID Card',
                     style: const TextStyle(
                       fontSize: 12,
@@ -1069,7 +1106,7 @@ class _ScannerPageState extends State<ScannerPage>
                           error.errorCode ==
                               MobileScannerErrorCode.permissionDenied
                           ? 'Izin kamera ditolak. Aktifkan izin kamera di pengaturan aplikasi.'
-                          : 'Kamera depan gagal dijalankan. Tekan tombol refresh.';
+                          : '$_securityCameraLabel gagal dijalankan. Tekan tombol refresh.';
 
                       // Un-mirror error builder content
                       return Transform(
@@ -1131,14 +1168,18 @@ class _ScannerPageState extends State<ScannerPage>
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(color: Colors.white.withAlpha(35)),
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.camera_front, size: 16, color: Colors.white),
-                        SizedBox(width: 6),
+                        Icon(
+                          _securityCameraIcon,
+                          size: 16,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 6),
                         Text(
-                          'Kamera depan',
-                          style: TextStyle(
+                          _securityCameraLabel,
+                          style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                             color: Colors.white,

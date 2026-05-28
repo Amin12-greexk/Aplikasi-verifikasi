@@ -108,7 +108,9 @@ String _extractBarcodeInfo(String fullBarcode) {
   final nik = info['NIK']?.trim() ?? '';
   final nama = info['Nama']?.trim() ?? '';
   final bagian = info['Bagian']?.trim() ?? '';
-  if (nama.isEmpty || (pin.isEmpty && nik.isEmpty)) return '';
+  
+  // BYPASS: Jika gagal parsing minimal, kembalikan string kosong agar pemanggil bisa fallback ke raw
+  if (pin.isEmpty && nik.isEmpty) return '';
 
   final parts = <String>[];
   if (nik.isNotEmpty) {
@@ -116,7 +118,8 @@ String _extractBarcodeInfo(String fullBarcode) {
   } else {
     parts.add('PIN: $pin');
   }
-  parts.add('Nama: $nama');
+  
+  if (nama.isNotEmpty) parts.add('Nama: $nama');
   if (bagian.isNotEmpty) parts.add('Bagian: $bagian');
   return parts.join(' | ');
 }
@@ -485,15 +488,16 @@ Future<Router> buildRouter(Database db) async {
   r.post('/toilet-permit/approve', (Request req) async {
     try {
       final body = jsonDecode(await req.readAsString());
-      var id = _extractBarcodeInfo(
-        body['id_karyawan']?.toString().trim() ?? '',
-      );
+      final rawId = body['id_karyawan']?.toString().trim() ?? '';
+      var id = _extractBarcodeInfo(rawId);
+      if (id.isEmpty) id = rawId;
+
       final username = body['username']?.toString().trim();
       final duration = _normalizeDurationMinutes(body['duration_minutes']);
       final isBypass = body['is_bypass'] == true;
       final bypassReason = body['bypass_reason']?.toString().trim();
 
-      if (id.isEmpty) return bad('QR tidak dikenal');
+      if (id.isEmpty) return bad('Data QR kosong');
       if (username == null || username.isEmpty) return bad('Username wajib');
 
       final supervisor = db.select(
@@ -659,11 +663,12 @@ Future<Router> buildRouter(Database db) async {
   r.post('/toilet-permit/return', (Request req) async {
     try {
       final body = jsonDecode(await req.readAsString());
-      var id = _extractBarcodeInfo(
-        body['id_karyawan']?.toString().trim() ?? '',
-      );
+      final rawId = body['id_karyawan']?.toString().trim() ?? '';
+      var id = _extractBarcodeInfo(rawId);
+      if (id.isEmpty) id = rawId;
+
       final username = body['username']?.toString().trim();
-      if (id.isEmpty) return bad('QR tidak dikenal');
+      if (id.isEmpty) return bad('Data QR kosong');
       if (username == null || username.isEmpty) return bad('Username wajib');
 
       final rows = db.select(
@@ -1059,8 +1064,10 @@ Future<Router> buildRouter(Database db) async {
 
   r.post('/scan-pengawas', (Request req) async {
     final body = jsonDecode(await req.readAsString());
-    var id = _extractBarcodeInfo(body['id_karyawan']?.toString().trim() ?? '');
-    if (id.isEmpty) return bad('QR tidak dikenal');
+    final rawId = body['id_karyawan']?.toString().trim() ?? '';
+    var id = _extractBarcodeInfo(rawId);
+    if (id.isEmpty) id = rawId;
+    if (id.isEmpty) return bad('Data QR kosong');
     final nowIso = _formatWibIso(_nowUtc());
     db.execute(
       'INSERT INTO log_pulang(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, pengawas_scanned_at) VALUES(?, "ACC", "PENDING", ?, ?) ON CONFLICT(id_karyawan) DO UPDATE SET status_pengawas="ACC", pengawas_scanned_by=?, pengawas_scanned_at=?;',
