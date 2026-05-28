@@ -254,9 +254,13 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     }
 
     final character = event.character;
-    if (character == null ||
-        character.isEmpty ||
-        character.codeUnits.any((unit) => unit < 32)) {
+    if (character == null || character.isEmpty) {
+      return KeyEventResult.ignored;
+    }
+
+    // Izinkan karakter printable (>= 32) ATAU newline (\n=10) dan carriage return (\r=13)
+    final code = character.codeUnitAt(0);
+    if (code < 32 && code != 10 && code != 13) {
       return KeyEventResult.ignored;
     }
 
@@ -363,7 +367,6 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
       if (raw.contains(',') && !raw.contains(':')) {
         final parts = raw.split(',').map(_cleanBarcodeValue).toList();
         if (parts.length >= 2) {
-          // Cari PIN: biasanya field yang hanya berisi angka (numeric)
           int pinIndex = -1;
           if (RegExp(r'^[0-9]+$').hasMatch(parts[0])) {
             pinIndex = 0;
@@ -391,7 +394,30 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
         }
       }
 
-      // 2. Format standar: PIN: xxx | Nama: yyy
+      // 2. Format Fleksibel: Cari PIN:, NAMA:, NIK:, BAGIAN: menggunakan Regex
+      // Ini menangani kasus di mana tidak ada pemisah baris (semua menyambung)
+      final patterns = {
+        'PIN': RegExp(r'PIN\s*:\s*([^\s|,\r\n]+)', caseSensitive: false),
+        'Nama': RegExp(r'NAMA\s*:\s*([^:|\r\n]+?)(?=\s*[A-Z]+:|$)', caseSensitive: false),
+        'NIK': RegExp(r'NIK\s*:\s*([^\s|,\r\n]+)', caseSensitive: false),
+        'Bagian': RegExp(r'BAGIAN\s*:\s*([^:|\r\n]+?)(?=\s*[A-Z]+:|$)', caseSensitive: false),
+      };
+
+      bool foundAny = false;
+      patterns.forEach((key, regex) {
+        final match = regex.firstMatch(raw);
+        if (match != null && match.groupCount >= 1) {
+          final val = match.group(1)?.trim() ?? '';
+          if (val.isNotEmpty) {
+            info[key] = val;
+            foundAny = true;
+          }
+        }
+      });
+
+      if (foundAny) return info;
+
+      // 3. Fallback: Format standar: PIN: xxx | Nama: yyy
       final parts = raw
           .split(RegExp(r'[|\r\n]+'))
           .map((p) => p.trim())

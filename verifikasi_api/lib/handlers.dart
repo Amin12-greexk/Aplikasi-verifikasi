@@ -103,25 +103,83 @@ Map<String, String> _parseBarcodeInfo(String fullBarcode) {
 }
 
 String _extractBarcodeInfo(String fullBarcode) {
-  final info = _parseBarcodeInfo(fullBarcode);
-  final pin = info['PIN']?.trim() ?? '';
-  final nik = info['NIK']?.trim() ?? '';
-  final nama = info['Nama']?.trim() ?? '';
-  final bagian = info['Bagian']?.trim() ?? '';
-  
-  // BYPASS: Jika gagal parsing minimal, kembalikan string kosong agar pemanggil bisa fallback ke raw
-  if (pin.isEmpty && nik.isEmpty) return '';
+  final raw = fullBarcode.trim();
+  if (raw.isEmpty) return '';
 
-  final parts = <String>[];
-  if (nik.isNotEmpty) {
-    parts.add('NIK: $nik');
-  } else {
-    parts.add('PIN: $pin');
+  try {
+    // 1. Cek format CSV (N, NAMA, NIK, ...) atau (NAMA, N, NIK, ...)
+    if (raw.contains(',') && !raw.contains(':')) {
+      final info = _parseBarcodeInfo(raw);
+      final pin = info['PIN']?.trim() ?? '';
+      final nik = info['NIK']?.trim() ?? '';
+      final nama = info['Nama']?.trim() ?? '';
+      final bagian = info['Bagian']?.trim() ?? '';
+      
+      if (pin.isNotEmpty || nik.isNotEmpty) {
+        final parts = <String>[];
+        if (nik.isNotEmpty) {
+          parts.add('NIK: $nik');
+        } else {
+          parts.add('PIN: $pin');
+        }
+        if (nama.isNotEmpty) parts.add('Nama: $nama');
+        if (bagian.isNotEmpty) parts.add('Bagian: $bagian');
+        return parts.join(' | ');
+      }
+    }
+
+    // 2. ULTRA-ROBUST REGEX PARSING
+    // Menangani teks yang "smashed" (menyambung tanpa spasi/newline)
+    final patterns = {
+      'PIN': RegExp(r'PIN\s*:\s*(.*?)(?=NAMA|NIK|BAGIAN|ALAMAT|ALAMAT|$)', caseSensitive: false, dotAll: true),
+      'Nama': RegExp(r'NAMA\s*:\s*(.*?)(?=PIN|NIK|BAGIAN|ALAMAT|ALAMAT|$)', caseSensitive: false, dotAll: true),
+      'NIK': RegExp(r'NIK\s*:\s*(.*?)(?=PIN|NAMA|BAGIAN|ALAMAT|ALAMAT|$)', caseSensitive: false, dotAll: true),
+      'Bagian': RegExp(r'BAGIAN\s*:\s*(.*?)(?=PIN|NAMA|NIK|ALAMAT|ALAMAT|$)', caseSensitive: false, dotAll: true),
+    };
+
+    final info = <String, String>{};
+    bool foundAny = false;
+
+    patterns.forEach((key, regex) {
+      final match = regex.firstMatch(raw);
+      if (match != null) {
+        var val = match.group(1)?.trim() ?? '';
+        // Bersihkan trailing delimiters jika ada (misal pipe atau koma di akhir value)
+        val = val.replaceAll(RegExp(r'[|,\r\n]+$'), '').trim();
+        if (val.isNotEmpty) {
+          info[key] = val;
+          foundAny = true;
+        }
+      }
+    });
+
+    if (foundAny) {
+      final pin = info['PIN'] ?? '';
+      final nik = info['NIK'] ?? '';
+      final nama = info['Nama'] ?? '';
+      final bagian = info['Bagian'] ?? '';
+
+      final parts = <String>[];
+      if (nik.isNotEmpty) {
+        parts.add('NIK: $nik');
+      } else if (pin.isNotEmpty) {
+        parts.add('PIN: $pin');
+      }
+
+      if (parts.isNotEmpty) {
+        if (nama.isNotEmpty) parts.add('Nama: $nama');
+        if (bagian.isNotEmpty) parts.add('Bagian: $bagian');
+        return parts.join(' | ');
+      }
+    }
+  } catch (e) {
+    debugPrint('[Scanner] Error parsing barcode: $e');
   }
-  
-  if (nama.isNotEmpty) parts.add('Nama: $nama');
-  if (bagian.isNotEmpty) parts.add('Bagian: $bagian');
-  return parts.join(' | ');
+
+  // 3. FALLBACK: "Accept all kind of string"
+  // Kembalikan data mentah yang sudah dibersihkan dari karakter kontrol
+  // Gunakan spasi tunggal untuk menggantikan newline/tab agar konsisten antar scanner
+  return raw.replaceAll(RegExp(r'[\r\n\t]+'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
 }
 
 Future<T> _retryDbOperation<T>(
