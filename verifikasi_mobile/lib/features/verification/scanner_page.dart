@@ -308,10 +308,10 @@ class _ScannerPageState extends State<ScannerPage>
 
   void _submitHardwareScanBuffer({bool force = false}) {
     _hardwareScanDebounceTimer?.cancel();
-    final rawScan = _hardwareScanBuffer.toString().trim();
-    if (rawScan.isEmpty) return;
+    final rawInput = _hardwareScanBuffer.toString().trim();
+    if (rawInput.isEmpty) return;
 
-    if (!force && !_hasCompleteHardwareScanPayload(rawScan)) {
+    if (!force && !_hasCompleteHardwareScanPayload(rawInput)) {
       _hardwareScanDebounceTimer = Timer(
         _hardwareScanIncompleteDelay,
         () => _submitHardwareScanBuffer(force: true),
@@ -320,7 +320,12 @@ class _ScannerPageState extends State<ScannerPage>
     }
 
     _hardwareScanBuffer.clear();
-    unawaited(_processRawScan(rawScan, source: 'scanner'));
+    
+    // BERSIHKAN data dari karakter yang tidak diinginkan (seperti tanda petik dari scanner fisik)
+    final cleanedScan = _cleanBarcodeValue(rawInput);
+    if (cleanedScan.isEmpty) return;
+
+    unawaited(_processRawScan(cleanedScan, source: 'scanner'));
   }
 
   String _formatTime(DateTime time) {
