@@ -642,6 +642,11 @@ class _ScannerPageState extends State<ScannerPage>
     // BYPASS: Gunakan parsedScanId jika ada, jika tidak ada gunakan raw data langsung.
     // Ini berlaku untuk Pengawas maupun Security agar fleksibel.
     final scanId = parsedScanId.isNotEmpty ? parsedScanId : raw;
+    
+    debugPrint('[Scanner] Raw Scan: "$raw"');
+    debugPrint('[Scanner] Parsed Info: $info');
+    debugPrint('[Scanner] Final scanId: "$scanId"');
+
     final employeeLabel = parsedScanId.isNotEmpty
         ? _employeeLabel(info)
         : 'QR ID Card';

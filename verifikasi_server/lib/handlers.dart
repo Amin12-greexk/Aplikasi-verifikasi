@@ -748,6 +748,9 @@ Future<Router> buildRouter(Database db) async {
       var id = _extractBarcodeInfo(rawId);
       if (id.isEmpty) id = rawId;
       final username = body['username']?.toString().trim();
+
+      print('[Server] Received Toilet-Proof-Scan: raw="$rawId" -> parsed="$id"');
+
       if (id.isEmpty) return bad('Data QR kosong');
       if (username == null || username.isEmpty) return bad('Username wajib');
       final permit = _findToiletPermitByLookupId(db, id);
@@ -1267,6 +1270,9 @@ Future<Router> buildRouter(Database db) async {
     final rawId = body['id_karyawan']?.toString().trim() ?? '';
     var id = _extractBarcodeInfo(rawId);
     if (id.isEmpty) id = rawId;
+
+    print('[Server] Received Scan-Security: raw="$rawId" -> parsed="$id"');
+
     if (id.isEmpty) return bad('Data QR kosong');
     final nowIso = _formatWibIso(_nowUtc());
     final currentRows = db.select(

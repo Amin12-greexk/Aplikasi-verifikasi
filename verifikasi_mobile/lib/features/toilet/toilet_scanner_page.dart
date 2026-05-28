@@ -357,83 +357,154 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     }
   }
 
-  Map<String, String> _extractBarcodeInfo(String fullBarcode) {
-    final info = <String, String>{};
-    final raw = fullBarcode.trim();
-    if (raw.isEmpty) return info;
+Map<String, String> _extractBarcodeInfo(String fullBarcode) {
+  final info = <String, String>{};
 
-    try {
-      // 1. Cek format CSV (N, NAMA, NIK, ...) atau (NAMA, N, NIK, ...) - Prioritas Tinggi
-      if (raw.contains(',') && !raw.contains(':')) {
-        final parts = raw.split(',').map(_cleanBarcodeValue).toList();
-        if (parts.length >= 2) {
-          int pinIndex = -1;
-          if (RegExp(r'^[0-9]+$').hasMatch(parts[0])) {
-            pinIndex = 0;
-          } else if (RegExp(r'^[0-9]+$').hasMatch(parts[1])) {
-            pinIndex = 1;
-          }
-
-          if (pinIndex != -1) {
-            final pin = parts[pinIndex];
-            final nama = parts[pinIndex == 0 ? 1 : 0];
-            if (pin.isEmpty || nama.isEmpty) return <String, String>{};
-
-            info['PIN'] = pin;
-            info['Nama'] = nama;
-            if (parts.length >= 3 && parts[2].isNotEmpty) {
-              info['NIK'] = parts[2];
-            }
-            if (parts.length >= 10) {
-              info['Bagian'] = parts[9];
-            } else if (parts.length >= 4) {
-              info['Bagian'] = parts[3];
-            }
-            return info;
-          }
-        }
-      }
-
-      // 2. Format Fleksibel: Cari PIN:, NAMA:, NIK:, BAGIAN: menggunakan Regex
-      // Ini menangani kasus di mana tidak ada pemisah baris (semua menyambung)
-      final patterns = {
-        'PIN': RegExp(r'PIN\s*:\s*([^\s|,\r\n]+)', caseSensitive: false),
-        'Nama': RegExp(r'NAMA\s*:\s*([^:|\r\n]+?)(?=\s*[A-Z]+:|$)', caseSensitive: false),
-        'NIK': RegExp(r'NIK\s*:\s*([^\s|,\r\n]+)', caseSensitive: false),
-        'Bagian': RegExp(r'BAGIAN\s*:\s*([^:|\r\n]+?)(?=\s*[A-Z]+:|$)', caseSensitive: false),
-      };
-
-      bool foundAny = false;
-      patterns.forEach((key, regex) {
-        final match = regex.firstMatch(raw);
-        if (match != null && match.groupCount >= 1) {
-          final val = match.group(1)?.trim() ?? '';
-          if (val.isNotEmpty) {
-            info[key] = val;
-            foundAny = true;
-          }
-        }
-      });
-
-      if (foundAny) return info;
-
-      // 3. Fallback: Format standar: PIN: xxx | Nama: yyy
-      final parts = raw
-          .split(RegExp(r'[|\r\n]+'))
-          .map((p) => p.trim())
-          .toList();
-      for (final part in parts) {
-        final separatorIndex = part.indexOf(':');
-        if (separatorIndex <= 0) continue;
-
-        final rawKey = part.substring(0, separatorIndex).trim();
-        final value = part.substring(separatorIndex + 1).trim();
-        _putBarcodeField(info, rawKey, value);
-      }
-    } catch (_) {}
-
-    return info; // BYPASS
+  if (fullBarcode.trim().isEmpty) {
+    return info;
   }
+
+  try {
+    // =========================
+    // CLEAN RAW DATA
+    // =========================
+    String raw = fullBarcode
+        .replaceAll('\r', '\n')
+        .replaceAll('|', '\n')
+        .trim();
+
+    // =========================
+    // NORMALISASI FORMAT SCANNER
+    // Tambahkan newline sebelum keyword
+    // =========================
+    const fields = [
+      'PIN:',
+      'NAMA:',
+      'NAME:',
+      'NIK:',
+      'BAGIAN:',
+      'DEPARTMENT:',
+      'ALAMAT:',
+    ];
+
+    for (final field in fields) {
+      raw = raw.replaceAllMapped(
+        RegExp(field, caseSensitive: false),
+        (match) {
+          final value = match.group(0)!;
+
+          if (match.start == 0) {
+            return value;
+          }
+
+          final prevChar = raw[match.start - 1];
+
+          if (prevChar == '\n') {
+            return value;
+          }
+
+          return '\n$value';
+        },
+      );
+    }
+
+    // =========================
+    // SPLIT PER BARIS
+    // =========================
+    final lines = raw
+        .split(RegExp(r'\n+'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty);
+
+    for (final line in lines) {
+      final separatorIndex = line.indexOf(':');
+
+      if (separatorIndex <= 0) {
+        continue;
+      }
+
+      final rawKey = line.substring(0, separatorIndex).trim();
+      final rawValue = line.substring(separatorIndex + 1).trim();
+
+      if (rawValue.isEmpty) {
+        continue;
+      }
+
+      final key = rawKey.toUpperCase();
+
+      switch (key) {
+        case 'PIN':
+          info['PIN'] = rawValue;
+          break;
+
+        case 'NAMA':
+        case 'NAME':
+          info['Nama'] = rawValue;
+          break;
+
+        case 'NIK':
+          info['NIK'] = rawValue;
+          break;
+
+        case 'BAGIAN':
+        case 'DEPARTMENT':
+          info['Bagian'] = rawValue;
+          break;
+
+        case 'ALAMAT':
+          info['Alamat'] = rawValue;
+          break;
+      }
+    }
+
+    // =========================
+    // FALLBACK REGEX
+    // =========================
+    if (info.isEmpty) {
+      final compact = fullBarcode.trim();
+
+      final pinMatch = RegExp(
+        r'PIN\s*:\s*([0-9]+)',
+        caseSensitive: false,
+      ).firstMatch(compact);
+
+      final nikMatch = RegExp(
+        r'NIK\s*:\s*([0-9]+)',
+        caseSensitive: false,
+      ).firstMatch(compact);
+
+      final namaMatch = RegExp(
+        r'NAMA\s*:\s*(.+?)(?=NIK:|BAGIAN:|ALAMAT:|$)',
+        caseSensitive: false,
+      ).firstMatch(compact);
+
+      final bagianMatch = RegExp(
+        r'BAGIAN\s*:\s*(.+?)(?=ALAMAT:|$)',
+        caseSensitive: false,
+      ).firstMatch(compact);
+
+      if (pinMatch != null) {
+        info['PIN'] = pinMatch.group(1)!.trim();
+      }
+
+      if (nikMatch != null) {
+        info['NIK'] = nikMatch.group(1)!.trim();
+      }
+
+      if (namaMatch != null) {
+        info['Nama'] = namaMatch.group(1)!.trim();
+      }
+
+      if (bagianMatch != null) {
+        info['Bagian'] = bagianMatch.group(1)!.trim();
+      }
+    }
+  } catch (e) {
+    debugPrint('QR Parse Error: $e');
+  }
+
+  return info;
+}
 
   String _normalizeBarcodeInfoForLookup(Map<String, String> info) {
     final pin = info['PIN']?.trim() ?? '';
@@ -468,9 +539,24 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     return 'ID Card';
   }
 
-  String _buildScanId(Map<String, String> info) {
-    return _normalizeBarcodeInfoForLookup(info).trim();
-  }
+String _buildScanId(Map<String, String> info) {
+  final normalized = <String>[];
+
+  info.forEach((key, value) {
+    final cleanKey = key.trim().toUpperCase();
+
+    final cleanValue = value
+        .trim()
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .toUpperCase();
+
+    normalized.add('$cleanKey:$cleanValue');
+  });
+
+  normalized.sort();
+
+  return normalized.join('|');
+}
 
   Future<String?> _showBypassDialog({
     required String employeeLabel,
@@ -594,6 +680,11 @@ class _ToiletScannerPageState extends State<ToiletScannerPage>
     
     // BYPASS: Gunakan parsedScanId jika ada, jika tidak ada gunakan raw data langsung.
     final scanId = parsedScanId.isNotEmpty ? parsedScanId : raw;
+
+    debugPrint('[Scanner-Toilet] Raw Scan: "$raw"');
+    debugPrint('[Scanner-Toilet] Parsed Info: $info');
+    debugPrint('[Scanner-Toilet] Final scanId: "$scanId"');
+
     final employeeLabel = parsedScanId.isNotEmpty
         ? _employeeLabel(info)
         : 'QR ID Card';
