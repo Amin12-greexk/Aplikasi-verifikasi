@@ -512,18 +512,23 @@ Map<String, String> _extractBarcodeInfo(String fullBarcode) {
     final nama = info['Nama']?.trim() ?? '';
     final bagian = info['Bagian']?.trim() ?? '';
 
+    // BYPASS: Jika minimal ada identitas (PIN/NIK), buat normalized string yang KONSISTEN
     if (pin.isEmpty && nik.isEmpty) {
       return '';
     }
 
     final parts = <String>[];
+    // Prioritas NIK, jika tidak ada baru PIN
     if (nik.isNotEmpty) {
       parts.add('NIK: $nik');
     } else {
       parts.add('PIN: $pin');
     }
+    
+    // Nama dan Bagian harus ada jika tersedia, agar ID unik dan cocok dengan server
     if (nama.isNotEmpty) parts.add('Nama: $nama');
     if (bagian.isNotEmpty) parts.add('Bagian: $bagian');
+    
     return parts.join(' | ');
   }
 
@@ -539,24 +544,10 @@ Map<String, String> _extractBarcodeInfo(String fullBarcode) {
     return 'ID Card';
   }
 
-String _buildScanId(Map<String, String> info) {
-  final normalized = <String>[];
-
-  info.forEach((key, value) {
-    final cleanKey = key.trim().toUpperCase();
-
-    final cleanValue = value
-        .trim()
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .toUpperCase();
-
-    normalized.add('$cleanKey:$cleanValue');
-  });
-
-  normalized.sort();
-
-  return normalized.join('|');
-}
+  String _buildScanId(Map<String, String> info) {
+    // KONSISTENSI: Gunakan fungsi yang sama dengan lookup agar ID yang dihasilkan sama
+    return _normalizeBarcodeInfoForLookup(info).trim();
+  }
 
   Future<String?> _showBypassDialog({
     required String employeeLabel,
