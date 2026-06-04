@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -829,6 +830,53 @@ class _ModernServerHomeState extends State<ModernServerHome> {
     );
   }
 
+  Future<void> _deleteLog(String id) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hapus Log Pulang'),
+        content: Text('Anda yakin ingin menghapus log untuk $id?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final encodedId = Uri.encodeComponent(id);
+      final response = await http.delete(
+        Uri.parse('http://localhost:8080/logs/$encodedId'),
+      );
+
+      if (response.statusCode == 200) {
+        setState(() {});
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Log berhasil dihapus'), backgroundColor: Colors.green),
+          );
+        }
+      } else {
+        throw Exception(response.body);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal menghapus: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   Widget _buildLogCard(Map<String, Object?> log, int index) {
     final id = log['id_karyawan'].toString();
     if (_showToiletLogs) {
@@ -890,12 +938,14 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Karyawan #$id',
+                    'ID Card: $id',
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 15,
                       color: Colors.black87,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 8),
                   Row(
@@ -908,10 +958,157 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                 ],
               ),
             ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+              onPressed: () => _deleteLog(id),
+              tooltip: 'Hapus Log',
+            ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _deleteToiletLog(String id) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hapus Izin Toilet'),
+        content: Text('Anda yakin ingin menghapus izin untuk $id?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final encodedId = Uri.encodeComponent(id);
+      final response = await http.delete(
+        Uri.parse('http://localhost:8080/toilet-permits/$encodedId'),
+      );
+
+      if (response.statusCode == 200) {
+        setState(() {}); // Refresh UI
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Izin toilet berhasil dihapus'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        throw Exception(response.body);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal menghapus: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _editToiletLog(Map<String, Object?> log) async {
+    final id = log['id_karyawan'].toString();
+    final currentDuration = int.tryParse(log['duration_minutes']?.toString() ?? '10') ?? 10;
+    final currentStatus = log['proof_status']?.toString() ?? 'PENDING';
+
+    final durationController = TextEditingController(text: currentDuration.toString());
+    String selectedStatus = currentStatus;
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Edit Izin Toilet'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('ID: $id', style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              TextField(
+                controller: durationController,
+                decoration: const InputDecoration(
+                  labelText: 'Durasi (menit)',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                value: selectedStatus,
+                decoration: const InputDecoration(
+                  labelText: 'Status Bukti',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'PENDING', child: Text('PENDING')),
+                  DropdownMenuItem(value: 'SCANNED', child: Text('SCANNED')),
+                ],
+                onChanged: (val) {
+                  if (val != null) setDialogState(() => selectedStatus = val);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Simpan'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result != true) return;
+
+    try {
+      final encodedId = Uri.encodeComponent(id);
+      final response = await http.put(
+        Uri.parse('http://localhost:8080/toilet-permits/$encodedId'),
+        body: jsonEncode({
+          'duration_minutes': int.tryParse(durationController.text) ?? 10,
+          'proof_status': selectedStatus,
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
+
+      if (response.statusCode == 200) {
+        setState(() {});
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Izin berhasil diupdate'), backgroundColor: Colors.green),
+          );
+        }
+      } else {
+        throw Exception(response.body);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal update: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   Widget _buildToiletLogCard(Map<String, Object?> log, int index, String id) {
@@ -950,6 +1147,8 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                     fontSize: 15,
                     color: Colors.black87,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 6),
                 Text(
@@ -962,6 +1161,16 @@ class _ModernServerHomeState extends State<ModernServerHome> {
                 ),
               ],
             ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.edit_outlined, color: Colors.blueAccent, size: 20),
+            onPressed: () => _editToiletLog(log),
+            tooltip: 'Edit Izin',
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+            onPressed: () => _deleteToiletLog(id),
+            tooltip: 'Hapus Izin',
           ),
         ],
       ),

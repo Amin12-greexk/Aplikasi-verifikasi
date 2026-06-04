@@ -66,6 +66,9 @@ Future<Database> initDb(String path) async {
   db.execute(
     'CREATE INDEX IF NOT EXISTS idx_tanggal ON log_pulang_history(tanggal);',
   );
+  db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_log_pulang_history_id_karyawan ON log_pulang_history(id_karyawan);',
+  );
 
   // ── TOILET PERMIT ─────────────────────────────────────────────────────────────
   db.execute('''

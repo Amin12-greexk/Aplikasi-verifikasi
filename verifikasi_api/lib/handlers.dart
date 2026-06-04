@@ -260,6 +260,38 @@ Map<String, Object?>? _findToiletPermitByLookupId(
   return Map<String, Object?>.from(fallbackRows.first);
 }
 
+/// Flexible lookup for log_pulang — mirrors _findToiletPermitByLookupId.
+/// 1. Exact match on id_karyawan.
+/// 2. Fallback: extract identity key (PIN/NIK) and search with exact + LIKE.
+Map<String, Object?>? _findLogPulangByLookupId(
+  Database db,
+  String lookupId,
+) {
+  final cleaned = lookupId.trim();
+  if (cleaned.isEmpty) return null;
+
+  // 1. Exact match
+  final exactRows = db.select(
+    'SELECT * FROM log_pulang WHERE id_karyawan=? LIMIT 1',
+    [cleaned],
+  );
+  if (exactRows.isNotEmpty) {
+    return Map<String, Object?>.from(exactRows.first);
+  }
+
+  // 2. Fallback: identity key (PIN/NIK) based search
+  final identityKey = _extractIdentityLookupKey(cleaned);
+  if (identityKey.isEmpty) return null;
+
+  final fallbackRows = db.select(
+    'SELECT * FROM log_pulang WHERE id_karyawan=? OR id_karyawan LIKE ? '
+    'ORDER BY COALESCE(pengawas_scanned_at, created_at) DESC LIMIT 1',
+    [identityKey, '$identityKey%'],
+  );
+  if (fallbackRows.isEmpty) return null;
+  return Map<String, Object?>.from(fallbackRows.first);
+}
+
 Future<T> _retryDbOperation<T>(
   Future<T> Function() operation, {
   int maxRetries = 3,
@@ -1101,11 +1133,9 @@ Future<Router> buildRouter(Database db) async {
   r.get('/status/<id>', (Request req, String rawId) {
     final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());
     if (id.isEmpty) return bad('QR tidak dikenal');
-    final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
-      id,
-    ]);
-    if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
-    return ok(Map<String, Object?>.from(rows.first));
+    final found = _findLogPulangByLookupId(db, id);
+    if (found == null) return bad('Log tidak ditemukan', code: 404);
+    return ok(found);
   });
 
   r.post('/logs', (Request req) async {
@@ -1135,27 +1165,28 @@ Future<Router> buildRouter(Database db) async {
   r.get('/logs/<id>', (Request req, String rawId) {
     final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());
     if (id.isEmpty) return bad('QR tidak dikenal');
-    final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
-      id,
-    ]);
-    if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
-    return ok(Map<String, Object?>.from(rows.first));
+    final found = _findLogPulangByLookupId(db, id);
+    if (found == null) return bad('Log tidak ditemukan', code: 404);
+    return ok(found);
   });
 
   r.put('/logs/<id>', (Request req, String rawId) async {
     try {
       final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());
       if (id.isEmpty) return bad('QR tidak dikenal');
+      final found = _findLogPulangByLookupId(db, id);
+      if (found == null) return bad('Log tidak ditemukan', code: 404);
+      final storedId = found['id_karyawan']?.toString().trim() ?? id;
       final body = jsonDecode(await req.readAsString());
       final pengawas = body['status_pengawas']?.toString().trim() ?? 'PENDING';
       final security = body['status_security']?.toString().trim() ?? 'PENDING';
       db.execute(
         'UPDATE log_pulang SET status_pengawas=?, status_security=? WHERE id_karyawan=?',
-        [pengawas, security, id],
+        [pengawas, security, storedId],
       );
-      saveLogHistory(id, pengawas, security);
+      saveLogHistory(storedId, pengawas, security);
       final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
-        id,
+        storedId,
       ]);
       if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
       return ok(Map<String, Object?>.from(rows.first));
@@ -1168,72 +1199,92 @@ Future<Router> buildRouter(Database db) async {
     try {
       final id = _extractBarcodeInfo(Uri.decodeComponent(rawId).trim());
       if (id.isEmpty) return bad('QR tidak dikenal');
-      final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
-        id,
-      ]);
-      if (rows.isEmpty) return bad('Log tidak ditemukan', code: 404);
-      db.execute('DELETE FROM log_pulang WHERE id_karyawan=?', [id]);
-      return ok({'message': 'Log berhasil dihapus', 'id_karyawan': id});
+      final found = _findLogPulangByLookupId(db, id);
+      if (found == null) return bad('Log tidak ditemukan', code: 404);
+      final storedId = found['id_karyawan']?.toString().trim() ?? id;
+      db.execute('DELETE FROM log_pulang WHERE id_karyawan=?', [storedId]);
+      return ok({'message': 'Log berhasil dihapus', 'id_karyawan': storedId});
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
   });
 
   r.post('/scan-pengawas', (Request req) async {
-    final body = jsonDecode(await req.readAsString());
-    final rawId = body['id_karyawan']?.toString().trim() ?? '';
-    var id = _extractBarcodeInfo(rawId);
-    if (id.isEmpty) id = rawId;
-    if (id.isEmpty) return bad('Data QR kosong');
-    final nowIso = _formatWibIso(_nowUtc());
-    db.execute(
-      'INSERT INTO log_pulang(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, pengawas_scanned_at) VALUES(?, "ACC", "PENDING", ?, ?) ON CONFLICT(id_karyawan) DO UPDATE SET status_pengawas="ACC", pengawas_scanned_by=?, pengawas_scanned_at=?;',
-      [id, body['username'], nowIso, body['username'], nowIso],
-    );
-    return ok(
-      Map<String, Object?>.from(
-        db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [id]).first,
-      ),
-    );
+    try {
+      final body = jsonDecode(await req.readAsString());
+      final rawId = body['id_karyawan']?.toString().trim() ?? '';
+      var id = _extractBarcodeInfo(rawId);
+      if (id.isEmpty) id = rawId;
+      if (id.isEmpty) return bad('Data QR kosong');
+
+      // Check if this identity already exists under a different stored key
+      final existing = _findLogPulangByLookupId(db, id);
+      final storedId = existing?['id_karyawan']?.toString().trim() ?? id;
+
+      final nowIso = _formatWibIso(_nowUtc());
+      await _retryDbOperation(() async {
+        db.execute(
+          'INSERT INTO log_pulang(id_karyawan, status_pengawas, status_security, pengawas_scanned_by, pengawas_scanned_at) '
+          'VALUES(?, "ACC", "PENDING", ?, ?) '
+          'ON CONFLICT(id_karyawan) DO UPDATE SET status_pengawas="ACC", pengawas_scanned_by=?, pengawas_scanned_at=?;',
+          [storedId, body['username'], nowIso, body['username'], nowIso],
+        );
+      });
+      return ok(
+        Map<String, Object?>.from(
+          db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [storedId]).first,
+        ),
+      );
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
   });
 
   r.post('/scan-security', (Request req) async {
-    final body = jsonDecode(await req.readAsString());
-    final rawId = body['id_karyawan']?.toString().trim() ?? '';
-    var id = _extractBarcodeInfo(rawId);
-    if (id.isEmpty) id = rawId;
-    if (id.isEmpty) return bad('Data QR kosong');
-    final nowIso = _formatWibIso(_nowUtc());
-    final currentRows = db.select(
-      'SELECT * FROM log_pulang WHERE id_karyawan=?',
-      [id],
-    );
-    if (currentRows.isEmpty) {
-      return bad('Belum ada ACC pengawas untuk ID Card ini', code: 404);
-    }
+    try {
+      final body = jsonDecode(await req.readAsString());
+      final rawId = body['id_karyawan']?.toString().trim() ?? '';
+      var id = _extractBarcodeInfo(rawId);
+      if (id.isEmpty) id = rawId;
+      if (id.isEmpty) return bad('Data QR kosong');
 
-    final current = Map<String, Object?>.from(currentRows.first);
-    final statusPengawas = current['status_pengawas']?.toString().toUpperCase();
-    if (statusPengawas != 'ACC') {
-      return bad('Belum di-ACC Pengawas', code: 403);
-    }
+      final nowIso = _formatWibIso(_nowUtc());
 
-    final statusSecurity = current['status_security']?.toString().toUpperCase();
-    if (statusSecurity == 'ACC') {
-      current['message'] = 'Sudah di-scan Security';
-      return ok(current);
-    }
+      // Flexible lookup: exact match + identity key fallback
+      final current = _findLogPulangByLookupId(db, id);
+      if (current == null) {
+        return bad('Belum ada ACC pengawas untuk ID Card ini', code: 404);
+      }
 
-    db.execute(
-      'UPDATE log_pulang SET status_security="ACC", security_scanned_by=?, security_scanned_at=? WHERE id_karyawan=?',
-      [body['username'], nowIso, id],
-    );
-    final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
-      id,
-    ]);
-    final result = Map<String, Object?>.from(rows.first);
-    result['message'] = 'Berhasil ACC security';
-    return ok(result);
+      // Use the stored id_karyawan from database for all subsequent operations
+      final storedId = current['id_karyawan']?.toString().trim() ?? id;
+
+      final statusPengawas = current['status_pengawas']?.toString().toUpperCase();
+      if (statusPengawas != 'ACC') {
+        return bad('Belum di-ACC Pengawas', code: 403);
+      }
+
+      final statusSecurity = current['status_security']?.toString().toUpperCase();
+      if (statusSecurity == 'ACC') {
+        current['message'] = 'Sudah di-scan Security';
+        return ok(current);
+      }
+
+      await _retryDbOperation(() async {
+        db.execute(
+          'UPDATE log_pulang SET status_security="ACC", security_scanned_by=?, security_scanned_at=? WHERE id_karyawan=?',
+          [body['username'], nowIso, storedId],
+        );
+      });
+      final rows = db.select('SELECT * FROM log_pulang WHERE id_karyawan=?', [
+        storedId,
+      ]);
+      final result = Map<String, Object?>.from(rows.first);
+      result['message'] = 'Berhasil ACC security';
+      return ok(result);
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
   });
 
   r.get(
