@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/services/auth_service.dart';
+import '../../core/services/fcm_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../id_card/id_card_scanner_page.dart';
 import '../toilet/toilet_background_worker_service.dart';
@@ -75,6 +76,7 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
     try {
       await AuthService.login(username, password);
       await ToiletBackgroundWorkerService.syncWithCurrentUser();
+      await FcmService.syncToken();
 
       if (mounted) {
         Navigator.of(

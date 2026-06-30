@@ -84,6 +84,7 @@ Future<Database> initDb(String path) async {
       room_id INTEGER,
       is_bypass INTEGER NOT NULL DEFAULT 0,
       bypass_reason TEXT,
+      expiry_notified INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE SET NULL
     );
@@ -115,6 +116,21 @@ Future<Database> initDb(String path) async {
   );
   db.execute(
     'CREATE INDEX IF NOT EXISTS idx_toilet_permit_history_id_karyawan ON toilet_permit_history(id_karyawan);',
+  );
+
+  // ── DEVICE TOKENS (FCM push) ──────────────────────────────────────────────────
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS device_tokens (
+      token TEXT PRIMARY KEY,
+      username TEXT,
+      role TEXT,
+      platform TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  ''');
+  db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_device_tokens_role ON device_tokens(role);',
   );
 
   // ── MIGRATIONS (safe ADD COLUMN for existing DBs) ─────────────────────────────
@@ -216,6 +232,11 @@ Future<Database> initDb(String path) async {
   } catch (_) {}
   try {
     db.execute('ALTER TABLE toilet_permit ADD COLUMN bypass_reason TEXT;');
+  } catch (_) {}
+  try {
+    db.execute(
+      'ALTER TABLE toilet_permit ADD COLUMN expiry_notified INTEGER DEFAULT 0;',
+    );
   } catch (_) {}
 
   // toilet_permit_history

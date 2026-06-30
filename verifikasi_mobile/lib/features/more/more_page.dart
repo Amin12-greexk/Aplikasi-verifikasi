@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/config/dev_visibility.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/fcm_service.dart';
 import '../../core/config/server_profile_manager.dart';
 import '../../core/theme/app_colors.dart';
 import '../toilet/toilet_background_worker_service.dart';
@@ -335,6 +336,7 @@ class MorePage extends StatelessWidget {
           ElevatedButton(
             onPressed: () async {
               await ToiletBackgroundWorkerService.cancel();
+              await FcmService.unregister();
               await AuthService.logout();
               if (ctx.mounted) {
                 Navigator.of(

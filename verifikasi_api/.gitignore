@@ -3,7 +3,12 @@
 build/
 coverage/
 data/
+backup/
 *.db
 *.db-shm
 *.db-wal
 server.exe
+
+# Firebase service account (RAHASIA — berisi private key)
+serviceAccount*.json
+*service-account*.json

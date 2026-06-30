@@ -4,6 +4,7 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as io;
 import 'package:sqlite3/sqlite3.dart';
 
+import 'fcm.dart';
 import 'handlers.dart';
 
 Future<HttpServer> startServer({
@@ -24,6 +25,10 @@ Future<HttpServer> startServer({
 
   // Keep behavior consistent with desktop server.
   startDailyResetScheduler(db);
+
+  // Server-side FCM push when a toilet permit expires (works even when the
+  // mobile app is closed). No-op if FCM is not configured via env vars.
+  startToiletExpiryPushScheduler(db, FcmSender.fromEnv());
 
   return server;
 }
