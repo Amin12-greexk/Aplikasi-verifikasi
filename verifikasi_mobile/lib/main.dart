@@ -4,6 +4,7 @@ import 'core/config/config.dart';
 import 'core/config/dev_visibility.dart';
 import 'core/services/auth_service.dart';
 import 'core/services/daily_refresh_manager.dart';
+import 'core/services/fcm_service.dart';
 import 'core/services/local_notification_service.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
@@ -23,6 +24,8 @@ void main() async {
   await DevVisibility.init();
   await AuthService.init();
   await LocalNotificationService.init();
+  await FcmService.init();
+  await FcmService.syncToken();
   await ToiletBackgroundWorkerService.syncWithCurrentUser();
   runApp(const MyApp());
 }
@@ -127,13 +130,20 @@ class _HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
   Widget _body() {
     final tabs = _isPengawas
         ? <Widget>[
-            const HomePage(),
+            HomePage(
+              onOpenVerification: () => setState(() => _index = 1),
+              onOpenAttendance: () => setState(() => _index = 2),
+              onOpenMore: () => setState(() => _index = 3),
+            ),
             VerificationTab(isShellActive: _index == 1),
             const AttendancePage(),
             const MorePage(),
           ]
         : <Widget>[
-            const HomePage(),
+            HomePage(
+              onOpenVerification: () => setState(() => _index = 1),
+              onOpenMore: () => setState(() => _index = 2),
+            ),
             VerificationTab(isShellActive: _index == 1),
             const MorePage(),
           ];

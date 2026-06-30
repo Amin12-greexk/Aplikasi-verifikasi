@@ -76,6 +76,7 @@ class LocalNotificationService {
             priority: Priority.high,
             category: AndroidNotificationCategory.reminder,
             playSound: true,
+            enableVibration: true,
             visibility: NotificationVisibility.public,
           ),
         ),

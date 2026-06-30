@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Firebase (config publik, tetap tidak di-commit agar tiap env pakai miliknya)
+/android/app/google-services.json

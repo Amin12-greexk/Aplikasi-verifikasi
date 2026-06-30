@@ -26,6 +26,7 @@ Future<void> main() async {
 
     stdout.writeln('[SHUTDOWN] Signal received: $signal');
     stopDailyResetScheduler();
+    stopToiletExpiryPushScheduler();
     await shutdownServer(server);
     db.dispose();
     stdout.writeln('[SHUTDOWN] Server closed gracefully');

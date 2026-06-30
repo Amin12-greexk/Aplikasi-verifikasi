@@ -5,6 +5,8 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:sqlite3/sqlite3.dart';
 
+import 'fcm.dart';
+
 String _generateToken(String username, String role) {
   return 'token_${username}_${role}_${DateTime.now().millisecondsSinceEpoch}';
 }
@@ -583,6 +585,100 @@ void stopDailyResetScheduler() {
   _dailyResetTimer = null;
 }
 
+// ── TOILET EXPIRY PUSH (FCM) ────────────────────────────────────────────────────
+Timer? _expiryPushTimer;
+bool _expiryPushRunning = false;
+
+/// Periodically pushes an FCM notification to security devices when an active
+/// toilet permit passes its expiry. Runs server-side so it works even when the
+/// mobile app is closed. No-op when [fcm] is null (FCM not configured).
+void startToiletExpiryPushScheduler(Database db, FcmSender? fcm) {
+  _expiryPushTimer?.cancel();
+  if (fcm == null) {
+    print('[FCM] Expiry push scheduler not started (FCM disabled).');
+    return;
+  }
+  _expiryPushTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
+    await _checkAndPushExpiredPermits(db, fcm);
+  });
+  print('[FCM] Expiry push scheduler started (every 30s).');
+}
+
+void stopToiletExpiryPushScheduler() {
+  _expiryPushTimer?.cancel();
+  _expiryPushTimer = null;
+}
+
+String _shortEmployeeLabel(String idKaryawan) {
+  final raw = idKaryawan.trim();
+  if (raw.isEmpty) return 'Mitra';
+  // id_karyawan is stored as e.g. "NIK: 123 | Nama: Budi | Bagian: Produksi".
+  final namaMatch = RegExp(
+    r'Nama\s*:\s*([^|]+)',
+    caseSensitive: false,
+  ).firstMatch(raw);
+  final nama = namaMatch?.group(1)?.trim() ?? '';
+  if (nama.isNotEmpty) return nama;
+  return raw;
+}
+
+Future<void> _checkAndPushExpiredPermits(Database db, FcmSender fcm) async {
+  if (_expiryPushRunning) return;
+  _expiryPushRunning = true;
+  try {
+    final now = _nowUtc();
+    final rows = db.select(
+      "SELECT id_karyawan, expires_at FROM toilet_permit "
+      "WHERE proof_status='SCANNED' AND expires_at IS NOT NULL "
+      "AND COALESCE(expiry_notified, 0) = 0",
+    );
+
+    final expired = <Map<String, Object?>>[];
+    for (final row in rows) {
+      final expiresAt = _tryParseDateTime(row['expires_at']);
+      if (expiresAt == null) continue;
+      if (!expiresAt.isAfter(now)) {
+        expired.add(Map<String, Object?>.from(row));
+      }
+    }
+    if (expired.isEmpty) return;
+
+    final tokenRows = db.select(
+      "SELECT token FROM device_tokens WHERE role = 'security'",
+    );
+    final tokens = tokenRows
+        .map((r) => r['token']?.toString() ?? '')
+        .where((t) => t.isNotEmpty)
+        .toList();
+
+    for (final permit in expired) {
+      final idKaryawan = permit['id_karyawan']?.toString() ?? '';
+      final label = _shortEmployeeLabel(idKaryawan);
+      for (final token in tokens) {
+        final result = await fcm.sendToToken(
+          token: token,
+          title: 'Waktu toilet sudah habis',
+          body: '$label sudah melewati batas waktu toilet.',
+          data: {'type': 'toilet_expired', 'id_karyawan': idKaryawan},
+        );
+        if (result.invalidToken) {
+          db.execute('DELETE FROM device_tokens WHERE token=?', [token]);
+        }
+      }
+      // Mark notified even if no tokens / send failed, so we don't retry the
+      // same permit every 30s. A fresh proof-scan resets expiry_notified=0.
+      db.execute(
+        'UPDATE toilet_permit SET expiry_notified=1 WHERE id_karyawan=?',
+        [idKaryawan],
+      );
+    }
+  } catch (e) {
+    print('[FCM] expiry push check failed: $e');
+  } finally {
+    _expiryPushRunning = false;
+  }
+}
+
 Future<Router> buildRouter(Database db) async {
   final r = Router();
   Response bad(String msg, {int code = 400}) => Response(
@@ -802,7 +898,7 @@ Future<Router> buildRouter(Database db) async {
 
       await _retryDbOperation(() async {
         db.execute(
-          'UPDATE toilet_permit SET proof_scanned_by=?, proof_scanned_at=?, expires_at=?, proof_status="SCANNED" WHERE id_karyawan=?',
+          'UPDATE toilet_permit SET proof_scanned_by=?, proof_scanned_at=?, expires_at=?, proof_status="SCANNED", expiry_notified=0 WHERE id_karyawan=?',
           [username, nowIso, expiresAtIso, storedId],
         );
         // Update history yang bersesuaian (paling baru) agar laporannya lengkap
@@ -1420,6 +1516,53 @@ Future<Router> buildRouter(Database db) async {
         'deleted_toilet_permits': permitCount,
         'deleted_toilet_permit_history': permitHistoryCount,
       });
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
+
+  // ── FCM DEVICE TOKENS ─────────────────────────────────────────────────────────
+  r.post('/devices/register', (Request req) async {
+    try {
+      final body = jsonDecode(await req.readAsString());
+      final token = body['token']?.toString().trim();
+      if (token == null || token.isEmpty) return bad('Token wajib');
+      final username = body['username']?.toString().trim();
+      final role = body['role']?.toString().trim().toLowerCase();
+      final platform = body['platform']?.toString().trim();
+      final nowIso = _formatWibIso(_nowUtc());
+      await _retryDbOperation(() async {
+        db.execute(
+          'INSERT INTO device_tokens(token, username, role, platform, updated_at) VALUES(?, ?, ?, ?, ?) '
+          'ON CONFLICT(token) DO UPDATE SET username=?, role=?, platform=?, updated_at=?;',
+          [
+            token,
+            username,
+            role,
+            platform,
+            nowIso,
+            username,
+            role,
+            platform,
+            nowIso,
+          ],
+        );
+      });
+      return ok({'message': 'Token terdaftar'});
+    } catch (e) {
+      return bad('Error: $e', code: 500);
+    }
+  });
+
+  r.post('/devices/unregister', (Request req) async {
+    try {
+      final body = jsonDecode(await req.readAsString());
+      final token = body['token']?.toString().trim();
+      if (token == null || token.isEmpty) return bad('Token wajib');
+      await _retryDbOperation(() async {
+        db.execute('DELETE FROM device_tokens WHERE token=?', [token]);
+      });
+      return ok({'message': 'Token dihapus'});
     } catch (e) {
       return bad('Error: $e', code: 500);
     }
