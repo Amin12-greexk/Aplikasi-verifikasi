@@ -84,3 +84,26 @@ Template field-by-field:
 - Smoke test minimal setelah deploy:
   - `GET /logs`
   - `GET /toilet-permits`
+
+## Data karyawan & shift (lookup dari QR)
+
+Master karyawan (dari Excel) dan shift dominan bulan lalu (dari presensi) disimpan di
+tabel `employees`, `employee_shift_month`, dan `import_batches`.
+
+Import (default DRY-RUN; tambah `--commit` untuk menyimpan). Master dulu, baru presensi:
+
+```bash
+dart run bin/import_employees.dart master --file "DATA KARYAWAN.xlsx" --sheet "DATA KARYAWAN" --report master.json
+dart run bin/import_employees.dart presensi --file PRESENSI.xlsx --sheet OKTOBER --report presensi.json
+```
+
+- Penghubung master dan presensi adalah **PIN**. Batas shift: jam masuk sebelum 12:00 = PAGI, selain itu SORE.
+  Shift per karyawan = yang dominan (minimal 60% dan minimal 5 hari hadir), selain itu `TIDAK_PASTI`.
+- Shift manual: tambahkan kolom `SHIFT` (PAGI/SORE) di sheet master; nilainya menimpa shift presensi.
+- Di Docker: `docker exec -it <container> /app/import_employees master --file /data/master.xlsx --db /data/log.db`
+
+Endpoint (tanpa login, tidak mengembalikan NIK/alamat):
+
+- `POST /employee/lookup` body `{"q": "<isi QR>"}` atau `{"employee_id": 12}` (untuk memilih saat `AMBIGUOUS`)
+- Status: `FOUND`, `AMBIGUOUS`, `NOT_FOUND`. Rate limit 120/menit/IP.
+- Env opsional `LOOKUP_API_KEY`: bila diisi, header `x-api-key` wajib.

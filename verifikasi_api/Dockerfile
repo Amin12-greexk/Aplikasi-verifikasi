@@ -8,6 +8,7 @@ RUN dart pub get
 COPY . .
 RUN dart pub get --offline
 RUN dart compile exe bin/server.dart -o /app/server
+RUN dart compile exe bin/import_employees.dart -o /app/import_employees
 
 FROM debian:bookworm-slim
 RUN apt-get update \
@@ -17,6 +18,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=build /app/server /app/server
+COPY --from=build /app/import_employees /app/import_employees
 
 # Ensure /data exists and is writable
 RUN mkdir -p /data

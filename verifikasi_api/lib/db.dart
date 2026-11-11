@@ -1,5 +1,7 @@
 import 'package:sqlite3/sqlite3.dart';
 
+import 'employees.dart';
+
 Future<Database> initDb(String path) async {
   final db = sqlite3.open(path);
 
@@ -132,6 +134,9 @@ Future<Database> initDb(String path) async {
   db.execute(
     'CREATE INDEX IF NOT EXISTS idx_device_tokens_role ON device_tokens(role);',
   );
+
+  // ── KARYAWAN & SHIFT ──────────────────────────────────────────────────────────
+  ensureEmployeeSchema(db);
 
   // ── MIGRATIONS (safe ADD COLUMN for existing DBs) ─────────────────────────────
   // users

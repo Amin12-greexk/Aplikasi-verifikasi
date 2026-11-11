@@ -5,6 +5,7 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:sqlite3/sqlite3.dart';
 
+import 'employees.dart';
 import 'fcm.dart';
 
 String _generateToken(String username, String role) {
@@ -103,6 +104,10 @@ Map<String, String> _parseBarcodeInfo(String fullBarcode) {
 
   return info;
 }
+
+/// Versi publik dari [_parseBarcodeInfo] (dipakai lookup karyawan).
+Map<String, String> parseBarcodeInfo(String fullBarcode) =>
+    _parseBarcodeInfo(fullBarcode);
 
 String _extractBarcodeInfo(String fullBarcode) {
   final raw = fullBarcode.trim();
@@ -1553,6 +1558,9 @@ Future<Router> buildRouter(Database db) async {
       return bad('Error: $e', code: 500);
     }
   });
+
+  // ── KARYAWAN (lookup shift dari QR) ───────────────────────────────────────────
+  registerEmployeeRoutes(r, db);
 
   r.post('/devices/unregister', (Request req) async {
     try {
