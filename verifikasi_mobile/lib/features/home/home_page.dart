@@ -11,7 +11,18 @@ import '../verification/verification_service.dart';
 
 /// Dashboard beranda with summary cards.
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  /// Callback navigasi tab dari shell (main.dart). Opsional; belum dipakai
+  /// oleh dashboard, tetapi dibutuhkan agar main.dart bisa dikompilasi.
+  final VoidCallback? onOpenVerification;
+  final VoidCallback? onOpenAttendance;
+  final VoidCallback? onOpenMore;
+
+  const HomePage({
+    super.key,
+    this.onOpenVerification,
+    this.onOpenAttendance,
+    this.onOpenMore,
+  });
 
   @override
   State<HomePage> createState() => _HomePageState();
