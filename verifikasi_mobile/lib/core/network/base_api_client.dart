@@ -76,11 +76,12 @@ class BaseApiClient {
   static Future<http.Response> post(
     String path, {
     Map<String, dynamic>? body,
+    Map<String, String>? headers,
   }) {
     return makeRequest(
       () => _client.post(
         Uri.parse('$baseUrl$path'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {'Content-Type': 'application/json', ...?headers},
         body: body != null ? jsonEncode(body) : null,
       ),
     );
